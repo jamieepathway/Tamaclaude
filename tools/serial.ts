@@ -9,7 +9,7 @@
 import type { FileHandle } from 'node:fs/promises';
 
 import { execFileSync } from 'node:child_process';
-import { open } from 'node:fs/promises';
+import { constants, open } from 'node:fs/promises';
 
 /**
  * How long to wait after opening the port before writing anything.
@@ -17,6 +17,37 @@ import { open } from 'node:fs/promises';
  * See `connect` — the board reboots when the port opens.
  */
 const BOOT_SETTLE_MS = 1500;
+
+/**
+ * How long to wait before retrying a write the port would not take, and before
+ * asking it for input again.
+ *
+ * These tools open the same port the daemon does, and used to open it the same
+ * way it did — blocking. `packages/device/src/serial.ts` §WRITE_RETRY_MS is the
+ * full account of why that was dangerous: a `write(2)` to a panel that has
+ * stopped draining parks uninterruptibly, the process becomes unkillable, every
+ * later `open(2)` on that device node parks too, and macOS panics at shutdown
+ * because it cannot terminate what is left. A tool run from a terminal put the
+ * host in exactly the same state as the daemon did.
+ *
+ * The read poll is looser than the write retry for the same reason it is there:
+ * nothing is queued behind a read, so there is no throughput to lose.
+ */
+const WRITE_RETRY_MS = 2;
+const READ_POLL_MS = 20;
+
+/** Bytes to ask for per read. Comfortably over one status line. */
+const READ_CHUNK = 4096;
+
+const pause = (ms: number): Promise<void> =>
+  new Promise((done) => {
+    setTimeout(done, ms).unref();
+  });
+
+/** `EAGAIN` is "not now", every other errno is "not ever". */
+function isAgain(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | null)?.code === 'EAGAIN';
+}
 
 export type Link = {
   readonly handle: FileHandle;
@@ -76,6 +107,35 @@ function absorb(text: string, health: Health): void {
   if (panel) health.orientation = panel[1];
 }
 
+/**
+ * The device's output, polled.
+ *
+ * `FileHandle.createReadStream` cannot be used on a non-blocking fd: it
+ * surfaces the first `EAGAIN` as a stream error and stops, which on this
+ * device happens immediately and always. An async generator keeps
+ * `echoDeviceLines` exactly as it was — it only ever wanted an iterable.
+ */
+async function* drain(
+  handle: FileHandle,
+  stopped: () => boolean,
+): AsyncGenerator<Buffer> {
+  const buffer = Buffer.allocUnsafe(READ_CHUNK);
+  while (!stopped()) {
+    try {
+      const { bytesRead } = await handle.read(buffer, 0, READ_CHUNK, null);
+      if (bytesRead > 0) {
+        // Copied: the next read reuses this buffer.
+        yield Buffer.from(buffer.subarray(0, bytesRead));
+        continue;
+      }
+    } catch (error) {
+      // Anything that is not "nothing to read yet" is the port going away.
+      if (!isAgain(error)) return;
+    }
+    await pause(READ_POLL_MS);
+  }
+}
+
 /** Print whatever the firmware says, and watch its counters for losses. */
 async function echoDeviceLines(
   stream: AsyncIterable<Buffer | string>,
@@ -111,7 +171,7 @@ async function echoDeviceLines(
  */
 export async function connect(port: string): Promise<Link> {
   execFileSync('stty', ['-f', port, 'raw', '-echo', '-crtscts']);
-  const handle = await open(port, 'r+');
+  const handle = await open(port, constants.O_RDWR | constants.O_NONBLOCK);
   // Opening the port resets the board — the USB-Serial/JTAG peripheral reboots
   // it on the DTR/RTS transition, the same mechanism esptool uses to enter the
   // bootloader. Anything written before it finishes booting is simply gone.
@@ -125,14 +185,17 @@ export async function connect(port: string): Promise<Link> {
   // A C6 reaches app_main in roughly 300ms. A second and a half is generous
   // and costs nothing once per run.
   await new Promise((done) => setTimeout(done, BOOT_SETTLE_MS));
-  const stream = handle.createReadStream({ autoClose: false });
+  let stopped = false;
   const health: Health = { resyncs: 0, aborts: 0, lost: false };
-  const reader = echoDeviceLines(stream, health);
+  const reader = echoDeviceLines(
+    drain(handle, () => stopped),
+    health,
+  );
   const close = async (): Promise<void> => {
-    // Stream before handle: closing the handle underneath a live stream
-    // surfaces as ERR_STREAM_PREMATURE_CLOSE, a teardown artefact that would
-    // discard the summary we came for.
-    stream.destroy();
+    // Reader before handle: the poll loop holds the fd and would read from a
+    // closed one on its next tick, turning an ordinary teardown into an
+    // `EBADF` that would discard the summary we came for.
+    stopped = true;
     await reader.catch(() => undefined);
     await handle.close().catch(() => undefined);
   };
@@ -153,12 +216,20 @@ export async function writeAll(
 ): Promise<void> {
   let written = 0;
   while (written < bytes.byteLength) {
-    const { bytesWritten } = await handle.write(
-      bytes,
-      written,
-      bytes.byteLength - written,
-    );
-    if (bytesWritten <= 0) throw new Error('port stopped accepting bytes');
-    written += bytesWritten;
+    // On a non-blocking fd a refused write is the ordinary case, not a fatal
+    // one — the port is simply full. `undefined` is that, and it is spelled as
+    // a caught rejection so the success path keeps one `const`.
+    const took = await handle
+      .write(bytes, written, bytes.byteLength - written)
+      .catch((error: unknown) => {
+        if (!isAgain(error)) throw error;
+        return undefined;
+      });
+    if (!took) {
+      await pause(WRITE_RETRY_MS);
+      continue;
+    }
+    if (took.bytesWritten <= 0) throw new Error('port stopped accepting bytes');
+    written += took.bytesWritten;
   }
 }

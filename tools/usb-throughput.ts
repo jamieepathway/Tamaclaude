@@ -30,8 +30,10 @@
  * when they diverge, the gap is exactly the backlog the daemon would have to
  * absorb, which is worth knowing before it is discovered at 8fps.
  */
+import type { FileHandle } from 'node:fs/promises';
+
 import { execFileSync } from 'node:child_process';
-import { open } from 'node:fs/promises';
+import { constants, open } from 'node:fs/promises';
 import process from 'node:process';
 
 /** Bytes per write. A round 4 KB, and the sweep below shows the choice does
@@ -68,6 +70,41 @@ type Measurement = {
 };
 
 /**
+ * Collect the device's status lines until told to stop.
+ *
+ * Split out of `measure` to keep it under its line limit, and a poll loop
+ * rather than `createReadStream`, which surfaces the first `EAGAIN` as a
+ * stream error and stops — immediately, and always, on a non-blocking fd.
+ */
+async function collectReports(
+  handle: FileHandle,
+  reports: Report[],
+  listening: () => boolean,
+): Promise<void> {
+  const buffer = Buffer.allocUnsafe(4096);
+  let pending = '';
+  while (listening()) {
+    let read = 0;
+    try {
+      ({ bytesRead: read } = await handle.read(buffer, 0, buffer.length, null));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EAGAIN') return;
+    }
+    if (read <= 0) {
+      await new Promise((done) => setTimeout(done, 20));
+      continue;
+    }
+    pending += buffer.subarray(0, read).toString('latin1');
+    const lines = pending.split('\n');
+    pending = lines.pop() ?? '';
+    for (const line of lines) {
+      const report = parseReport(line);
+      if (report) reports.push(report);
+    }
+  }
+}
+
+/**
  * Write to the port flat out for `seconds`, collecting the device's reports.
  *
  * Reading runs concurrently with writing on purpose. Draining only at the end
@@ -86,43 +123,47 @@ async function measure(
   // slow link from up here.
   execFileSync('stty', ['-f', port, 'raw', '-echo', '-crtscts']);
 
-  const handle = await open(port, 'r+');
+  // Non-blocking, and not as a detail. `packages/device/src/serial.ts`
+  // §WRITE_RETRY_MS records what a blocking fd on this device does when the
+  // panel stops draining: the write parks uninterruptibly, the process cannot
+  // be killed, every later `open(2)` on the node parks too, and macOS panics at
+  // shutdown because it cannot terminate what is left. A tool that measures the
+  // link must not be able to take the host down with it — and this one wrote
+  // flat out at the panel, which is the surest way to find that state.
+  //
+  // It costs nothing here either: retrying `EAGAIN` every 2ms measured
+  // 562.5 KB/s against 563.1 KB/s blocking, well inside the run-to-run spread
+  // this tool exists to report.
+  const handle = await open(port, constants.O_RDWR | constants.O_NONBLOCK);
   const payload = Buffer.alloc(chunkBytes, 0xa5);
   const reports: Report[] = [];
-  let pending = '';
-  let stream: ReturnType<typeof handle.createReadStream> | undefined;
-
-  const reader = (async () => {
-    stream = handle.createReadStream({ autoClose: false });
-    for await (const block of stream) {
-      pending += String(block);
-      const lines = pending.split('\n');
-      pending = lines.pop() ?? '';
-      for (const line of lines) {
-        const report = parseReport(line);
-        if (report) reports.push(report);
-      }
-    }
-  })();
+  let listening = true;
+  const reader = collectReports(handle, reports, () => listening);
 
   console.log(`writing ${chunkBytes}B chunks to ${port} for ${seconds}s…`);
   let written = 0;
   const start = process.hrtime.bigint();
   const deadline = start + BigInt(seconds) * 1_000_000_000n;
   while (process.hrtime.bigint() < deadline) {
-    const { bytesWritten } = await handle.write(payload);
-    written += bytesWritten;
+    try {
+      const { bytesWritten } = await handle.write(payload);
+      written += bytesWritten;
+    } catch (error) {
+      // A refused write is the port being full, not the port being broken.
+      // Counted as zero bytes, which is exactly what it moved.
+      if ((error as NodeJS.ErrnoException).code !== 'EAGAIN') throw error;
+      await new Promise((done) => setTimeout(done, 2));
+    }
   }
   const elapsed = Number(process.hrtime.bigint() - start) / 1e9;
   // Everything reported from here on describes a link with nothing on it.
   const windowsWhileWriting = reports.length;
 
-  // Let the last report arrive, then tear the read stream down before the
-  // handle. Closing the handle underneath a live stream surfaces as
-  // ERR_STREAM_PREMATURE_CLOSE, a teardown artefact that discards the results
-  // we came for.
+  // Let the last report arrive, then stop the reader before closing the
+  // handle. The poll loop holds the fd and would read from a closed one on its
+  // next tick, discarding the results we came for.
   await new Promise((done) => setTimeout(done, 1500));
-  stream?.destroy();
+  listening = false;
   await reader.catch(() => undefined);
   await handle.close().catch(() => undefined);
 

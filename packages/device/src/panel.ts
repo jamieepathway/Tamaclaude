@@ -29,7 +29,6 @@ import {
   afterOpen,
   afterRefresh,
   afterReport,
-  afterWedge,
   afterWrite,
   newLink,
   statusOf,
@@ -66,14 +65,19 @@ const REFRESH_MS = 5000;
  * the same reason: "a peer holding one open is not a reason for a restart to
  * hang". This is that, for the wire.
  *
- * Be precise about what it buys, because an earlier version of this paragraph
- * was not. It bounds `close()`. It does not on its own guarantee the process
- * leaves: a review measured the real shape — a genuinely blocked `write(2)` in
- * libuv's threadpool — and found that `FileHandle.close()`, which `serial.ts`
- * awaits, also never resolves, and that the process survives even
- * `process.exit(0)`. Whatever composes this eventually may still need a signal
- * to die. What the bound removes is the daemon waiting on a promise that will
- * never settle, which is the part this file controls.
+ * Be precise about what it buys, because two earlier versions of this
+ * paragraph were not. It bounds `close()`, and it used to be all that stood
+ * between a stalled panel and a host that could not shut down. Against a
+ * blocking fd a review measured the real shape — a genuinely blocked
+ * `write(2)` in libuv's threadpool — and found that `FileHandle.close()`,
+ * which `serial.ts` awaits, also never resolved, and that the process survived
+ * even `process.exit(0)`.
+ *
+ * **That is no longer the shape of the failure, and the fix was at the
+ * source.** `serial.ts` §WRITE_RETRY_MS opens the port `O_NONBLOCK`, so no
+ * thread is ever parked, `close()` always returns, and the process is always
+ * killable. What this bound is left doing is the modest thing it was named
+ * for: not making shutdown wait on a frame a stalled panel will never take.
  *
  * A quarter second is comfortably longer than a real frame and far shorter
  * than a person waiting for a daemon to come back. "Comfortably" rather than
@@ -105,6 +109,11 @@ const SHUTDOWN_DRAIN_MS = 250;
  * and short against a person waiting for the panel to come back. Longer than
  * `SHUTDOWN_DRAIN_MS` on purpose: shutdown may abandon a frame that this would
  * still be waiting on, and the way out should never be the slower path.
+ *
+ * The headroom survived the move to a non-blocking fd unchanged, which is not
+ * obvious and was measured rather than assumed: retrying `EAGAIN` every 2ms
+ * carries 562.5 KB/s, against 563.1 KB/s blocking. The budget this is generous
+ * against is the same budget.
  */
 const WRITE_TIMEOUT_MS = 1000;
 
@@ -204,12 +213,6 @@ function shutPort(ctx: Ctx): void {
   const now = ctx.state.read();
   ctx.state.write({ ...now, port: undefined });
   if (now.port) void now.port.close().catch(() => undefined);
-}
-
-/** Refuse the link because a write wedged, and let the port go. */
-function wedgedOut(ctx: Ctx): void {
-  commit(ctx, afterWedge(ctx.state.read().link));
-  shutPort(ctx);
 }
 
 function scheduleRetry(ctx: Ctx): void {
@@ -355,11 +358,17 @@ async function transmit(ctx: Ctx, rect: Rect, encoded: Encoded): Promise<void> {
       wedged(),
     ]);
     if (!wrote) {
-      // Not a lost frame — a lost *panel*. See `afterWedge`: the write cannot
-      // be taken back, so retrying costs a threadpool thread and an fd each
-      // time and cannot reset the board anyway. Refuse once, loudly, and let a
-      // person do the one thing that works.
-      wedgedOut(ctx);
+      // A panel that has stopped draining is a lost *port*, not a lost cause,
+      // and it is dropped like any other. That this is safe is entirely a
+      // property of `serial.ts` §WRITE_RETRY_MS: on a non-blocking fd the
+      // abandoned write holds a timer rather than a threadpool thread, so the
+      // port really can be closed and the fd really is given back.
+      //
+      // The reopen is the cure rather than a hopeful retry. Opening resets the
+      // board on the DTR/RTS transition — `serial.ts` §BOOT_SETTLE_MS — which
+      // is the one thing that clears a device in this state, and the reason
+      // the old behaviour told a person to unplug it by hand.
+      dropped(ctx);
       return;
     }
   } catch {
