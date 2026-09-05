@@ -101,7 +101,16 @@ const BOOT_SETTLE_MS = 1500;
  * | 2ms            | 562.5 KB/s  |  8.9% |
  *
  * Retrying without a delay costs a whole core to buy 3% more throughput, which
- * is the wrong trade for a desk toy. 562.5 KB/s is also within 0.6 KB/s of the
+ * is the wrong trade for a desk toy.
+ *
+ * Read the table as a *controlled comparison*, not as four absolute figures.
+ * All four ran in one session against one board through one harness, which is
+ * what makes the CPU column trustworthy. The absolute numbers move more than
+ * the table's own spread: `tools/usb-throughput.ts`, on the same board minutes
+ * later and with the same 2ms backoff, measured 580.4 KB/s — 17.9 KB/s above
+ * the 562.5 here, and above the tight spin's 581.2 only by rounding. So "2ms
+ * costs 3%" is the honest reading of a within-harness comparison, and may well
+ * be nothing at all. 562.5 KB/s is also within 0.6 KB/s of the
  * blocking implementation this replaces (563.1 KB/s, measured the same way in
  * the same session) and lands on the figure `docs/ARCHITECTURE.md` carries
  * today — which that file reached by correcting a 700 KB/s guess, so "the
