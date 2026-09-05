@@ -10,13 +10,22 @@
  *
  * The seam is deliberately lower-level than "send a packet". `write` reports
  * how many bytes the port took rather than looping until they have all gone,
- * so that the loop lives in `panel.ts` where a fake can short-write on purpose.
- * A short write is this program's one opportunity to corrupt the stream by
- * itself, and it would be a shame for the code that prevents it to be the code
- * that cannot be tested.
+ * so that the *whole-packet* loop lives in `panel.ts` where a fake can
+ * short-write on purpose. A short write is this program's one opportunity to
+ * corrupt the stream by itself, and it would be a shame for the code that
+ * prevents it to be the code that cannot be tested.
  *
  * **The fd is non-blocking, and that is the whole point of this file.** See
  * `WRITE_RETRY_MS` for what a blocking one did to the host.
+ *
+ * Be honest about what that cost the arrangement above, because the paragraph
+ * before it used to say this file held only "`stty`, `open` and a timer". It
+ * no longer does. A non-blocking fd needs an `EAGAIN` retry under the write
+ * and a poll loop under the read, both of them real logic, both of them here,
+ * and neither covered by a test — `write` cannot report a refusal upwards
+ * without `writeWhole` reading it as the port dying. The seam did not move and
+ * everything it was drawn to protect is still on the `panel.ts` side; what
+ * grew is the untested remainder, and it grew on purpose.
  */
 
 import type { FileHandle } from 'node:fs/promises';
@@ -53,21 +62,33 @@ const BOOT_SETTLE_MS = 1500;
  *
  * - The parked thread cannot be signalled. `SIGTERM` is ignored and `SIGKILL`
  *   leaves an unreapable `?E` process.
- * - The driver port stays acquired, so every *later* `open(2)` on that device
- *   node also parks — including `O_NONBLOCK` ones, and including `stty`'s.
- *   Seven processes were stuck this way at once, one of them an unrelated
- *   editor session that merely touched the port.
+ * - The wedged driver instance stays acquired, so a later `open(2)` that lands
+ *   on *that* instance parks too — including `O_NONBLOCK` ones, and including
+ *   `stty`'s. Seven processes were stuck this way at once, one of them an
+ *   unrelated agent session that merely touched the port. Scope it to the
+ *   instance rather than the path: a replug that re-enumerates on a new minor
+ *   opens fine at the same path while the old holder is still stuck, which is
+ *   why `kickstart` sometimes appears to fix this and sometimes does nothing.
  * - launchd counts the undead pid as running, so `KeepAlive` never fires, and
  *   a supervisor that answers with `kickstart -k` manufactures another one.
  * - Nothing in userspace clears it. Only physically unplugging the panel does,
  *   because the release comes from the USB detach tearing the driver down.
- * - macOS shutdown must terminate every process. Two kernel panics were logged
- *   the same day: `watchdog timeout: no checkins from watchdogd in 133
- *   seconds, shutdown in progress`.
+ * - macOS shutdown must terminate every process, and two kernel panics were
+ *   logged the same day: `watchdog timeout: no checkins from watchdogd in 133
+ *   seconds, shutdown in progress`. **Correlation, not established cause** —
+ *   `/usr/libexec/airportd` was also observed in uninterruptible sleep, and a
+ *   stuck WiFi daemon would block shutdown identically. The experiment that
+ *   would settle it is a reboot with zero stuck processes present, and it has
+ *   not been run. Treat this as the motivating suspicion, not a measurement.
  *
  * `O_NONBLOCK` removes the disease rather than treating it: the syscall
- * returns `EAGAIN` instead of sleeping, so no thread is ever parked, the port
- * is always closeable, and the process is always killable.
+ * returns `EAGAIN` instead of sleeping, so no write ever parks a thread, and a
+ * port this package opened is always closeable.
+ *
+ * Not "always killable", which an earlier draft of this paragraph claimed and
+ * `raw` below disproves eighty lines later: `stty` opens the device itself and
+ * can still park on a port something else wedged. What is bounded here is the
+ * write path, which is the one that wedges ports in the first place.
  *
  * Two milliseconds, and the number is measured. Writing a 16KB buffer flat out
  * at each strategy, over five seconds each, against this panel:
@@ -80,10 +101,14 @@ const BOOT_SETTLE_MS = 1500;
  * | 2ms            | 562.5 KB/s  |  8.9% |
  *
  * Retrying without a delay costs a whole core to buy 3% more throughput, which
- * is the wrong trade for a desk toy. 562.5 KB/s is also, exactly, both the
- * blocking implementation this replaces (563.1 KB/s measured) and the figure
- * `docs/ARCHITECTURE.md` has always quoted — so the fix is free in the only
- * currency the link is budgeted in.
+ * is the wrong trade for a desk toy. 562.5 KB/s is also within 0.6 KB/s of the
+ * blocking implementation this replaces (563.1 KB/s, measured the same way in
+ * the same session) and lands on the figure `docs/ARCHITECTURE.md` carries
+ * today — which that file reached by correcting a 700 KB/s guess, so "the
+ * documented figure" is a number with a history rather than a constant. The
+ * fix is free in the currency the link is budgeted in; it is not to-the-decimal
+ * identical, and 0.6 KB/s is three times the spread seen *within* the single
+ * run `ARCHITECTURE.md` publishes.
  */
 const WRITE_RETRY_MS = 2;
 
@@ -124,9 +149,25 @@ export type SerialSystem = {
 
 const run = promisify(execFile);
 
-const pause = (ms: number): Promise<void> =>
+/**
+ * Wait, and say whether waiting should hold the process open.
+ *
+ * **Not a detail, and `.unref()` on both was a bug.** A write that is retrying
+ * `EAGAIN` is work in flight and must keep the event loop alive: with both the
+ * write retry and the read poll parked in unref'd timers there is nothing
+ * ref'd left, and a program whose only other handle is a top-level `await`
+ * simply exits — mid-frame, code 13, no error. The daemon happened to survive
+ * that because `packages/daemon`'s unix socket listener holds a ref, which is
+ * composition luck rather than a design.
+ *
+ * The read poll is the other way round on purpose. Looking for input that may
+ * never come is not a reason for a process to stay alive, and a ref'd 20ms
+ * timer would keep one running for as long as the port was open.
+ */
+const pause = (ms: number, hold = true): Promise<void> =>
   new Promise((done) => {
-    setTimeout(done, ms).unref();
+    const timer = setTimeout(done, ms);
+    if (!hold) timer.unref();
   });
 
 /** `EAGAIN` is "not now", every other errno is "not ever". */
@@ -147,12 +188,24 @@ function isAgain(error: unknown): boolean {
  * `-F`, and adding that branch before anything can exercise it would be adding
  * an untested path, not portability.
  *
- * This subprocess is the one call here that can still park, because it opens
- * the device itself and `open(2)` on an already-wedged port blocks whatever
- * flags it is given. It is left as it is on purpose: it can only park on a
- * port some *other* process wedged, and after `WRITE_RETRY_MS` this package no
- * longer wedges ports. Replacing it means a native `tcsetattr`, which is a
- * dependency this repo would rightly refuse for a case it no longer causes.
+ * **This subprocess is the one call here that can still park, and the caveat
+ * is narrower than the first draft of it claimed.** `stty` opens the device
+ * itself, and `open(2)` on an already-wedged port blocks whatever flags it is
+ * given — measured: a probe printed its "about to open O_RDONLY|O_NONBLOCK"
+ * line and never printed the next one. It then sets the line discipline with
+ * `tcsetattr(…, TCSADRAIN, …)`, which waits for the output queue to empty, and
+ * on a board that has stopped accepting data that queue cannot empty. Neither
+ * half is bounded and neither is interruptible.
+ *
+ * That draft argued it was safe because "it can only park on a port some other
+ * process wedged, and this package no longer wedges ports". The second clause
+ * is true and the first does not follow from it: a Variant-B wedge starts at
+ * the *board*, so the port can be unusable with no process at fault, and this
+ * call runs at the top of every `openPort`. It is left as it is because the
+ * caller does not currently reconnect into a wedge — `link.ts` §afterWedge
+ * refuses the link instead — and not because the call is safe. Anything that
+ * changes that refusal has to deal with this first. The alternative is a
+ * native `tcsetattr` to get `TCSANOW`, which Node does not expose.
  */
 async function raw(path: string): Promise<void> {
   try {
@@ -194,6 +247,17 @@ function watchHandle(handle: FileHandle, watch: SerialWatch): () => void {
           watch.onData(new Uint8Array(buffer.subarray(0, bytesRead)));
           continue;
         }
+        // Zero is end of file, not "nothing yet" — "nothing yet" on a
+        // non-blocking fd is `EAGAIN`, which arrives as a throw. The stream
+        // this loop replaces reported the same condition as `close`, and
+        // treating it as an idle tick would poll a dead port for ever without
+        // ever telling anybody. Not observed on this hardware (a probe saw
+        // 344,977 `EAGAIN` and zero short reads across three seconds), so this
+        // is the branch that keeps the promise `SerialWatch.onClosed` makes
+        // rather than one with a measurement behind it.
+        listening.write(false);
+        watch.onClosed();
+        return;
       } catch (error) {
         if (!listening.read()) return;
         if (!isAgain(error)) {
@@ -204,7 +268,7 @@ function watchHandle(handle: FileHandle, watch: SerialWatch): () => void {
           return;
         }
       }
-      await pause(READ_POLL_MS);
+      await pause(READ_POLL_MS, false);
     }
   })();
 

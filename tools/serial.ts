@@ -25,10 +25,12 @@ const BOOT_SETTLE_MS = 1500;
  * These tools open the same port the daemon does, and used to open it the same
  * way it did — blocking. `packages/device/src/serial.ts` §WRITE_RETRY_MS is the
  * full account of why that was dangerous: a `write(2)` to a panel that has
- * stopped draining parks uninterruptibly, the process becomes unkillable, every
- * later `open(2)` on that device node parks too, and macOS panics at shutdown
- * because it cannot terminate what is left. A tool run from a terminal put the
- * host in exactly the same state as the daemon did.
+ * stopped draining parks uninterruptibly, the process becomes unkillable, a
+ * later `open(2)` landing on that same driver instance parks too, and macOS is
+ * left with processes it cannot terminate at shutdown. Two kernel panics were
+ * logged the same day; that the wedge caused them is suspected rather than
+ * shown. What is not in doubt is that a tool run from a terminal put the host
+ * in exactly the same state as the daemon did.
  *
  * The read poll is looser than the write retry for the same reason it is there:
  * nothing is queued behind a read, so there is no throughput to lose.
@@ -39,9 +41,25 @@ const READ_POLL_MS = 20;
 /** Bytes to ask for per read. Comfortably over one status line. */
 const READ_CHUNK = 4096;
 
-const pause = (ms: number): Promise<void> =>
+/**
+ * Wait, and say whether waiting should hold the process open.
+ *
+ * **Not a detail, and `.unref()` on both was a bug.** A write that is retrying
+ * `EAGAIN` is work in flight and must keep the event loop alive: with both the
+ * write retry and the read poll parked in unref'd timers there is nothing
+ * ref'd left, and a program whose only other handle is a top-level `await`
+ * simply exits — mid-frame, code 13, no error. The daemon happened to survive
+ * that because `packages/daemon`'s unix socket listener holds a ref, which is
+ * composition luck rather than a design.
+ *
+ * The read poll is the other way round on purpose. Looking for input that may
+ * never come is not a reason for a process to stay alive, and a ref'd 20ms
+ * timer would keep one running for as long as the port was open.
+ */
+const pause = (ms: number, hold = true): Promise<void> =>
   new Promise((done) => {
-    setTimeout(done, ms).unref();
+    const timer = setTimeout(done, ms);
+    if (!hold) timer.unref();
   });
 
 /** `EAGAIN` is "not now", every other errno is "not ever". */
@@ -132,7 +150,7 @@ async function* drain(
       // Anything that is not "nothing to read yet" is the port going away.
       if (!isAgain(error)) return;
     }
-    await pause(READ_POLL_MS);
+    await pause(READ_POLL_MS, false);
   }
 }
 

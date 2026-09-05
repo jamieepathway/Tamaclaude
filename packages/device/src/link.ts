@@ -142,6 +142,43 @@ function refusalFor(
 }
 
 /**
+ * The panel stopped accepting a write, and there is no way back in software.
+ *
+ * **Refused rather than retried, and the reason is libuv.** A `write(2)` to a
+ * device whose tx buffer has filled blocks in the threadpool, and abandoning
+ * the promise does not abandon the write: the thread is never released, the fd
+ * stays open, and the bytes may still land. Measured — four abandoned writes
+ * exhaust the default four-thread pool, after which `fs.open` never completes
+ * anywhere in the process. `serial.ts` opens the port with `fs.open`, so the
+ * daemon would then be unable to reopen it *ever*, including after a replug:
+ * the same permanent freeze the bound was added to prevent, arrived at four
+ * retries later and now poisoning the whole process.
+ *
+ * Holding the old fd is the second reason. A tty drops DTR on the *last* close,
+ * and `afterOpen` depends on that toggle to reset the board — so while the
+ * abandoned write holds the fd, the reopen this would retry does not reset
+ * anything and would wedge again.
+ *
+ * So: one wedged write, then stop, and say what a person has to do. Unplugging
+ * the panel power-cycles the board whatever the host thinks, which is the one
+ * thing that does work.
+ */
+export function afterWedge(state: LinkState): LinkState {
+  if (state.phase === 'refused') return state;
+  return {
+    ...state,
+    phase: 'refused',
+    needsPrime: true,
+    refusal:
+      'the panel stopped accepting data and the write could not be taken back ' +
+      '— unplug it and plug it back in. Retrying in software cannot help: the ' +
+      'blocked write holds both a thread and the port open, so the reopen ' +
+      'would neither reset the board nor, after a few attempts, be able to ' +
+      'open anything at all.',
+  };
+}
+
+/**
  * Fold in one status line from the device.
  *
  * This is the only place the host ever learns it has been wrong. Nothing else

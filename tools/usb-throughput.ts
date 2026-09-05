@@ -91,6 +91,8 @@ async function collectReports(
       if ((error as NodeJS.ErrnoException).code !== 'EAGAIN') return;
     }
     if (read <= 0) {
+      // Ref'd, unlike the daemon's equivalent: this is a measurement run with
+      // a definite end, and there is no other handle keeping it alive.
       await new Promise((done) => setTimeout(done, 20));
       continue;
     }
@@ -126,14 +128,18 @@ async function measure(
   // Non-blocking, and not as a detail. `packages/device/src/serial.ts`
   // §WRITE_RETRY_MS records what a blocking fd on this device does when the
   // panel stops draining: the write parks uninterruptibly, the process cannot
-  // be killed, every later `open(2)` on the node parks too, and macOS panics at
-  // shutdown because it cannot terminate what is left. A tool that measures the
-  // link must not be able to take the host down with it — and this one wrote
-  // flat out at the panel, which is the surest way to find that state.
+  // be killed, a later `open(2)` landing on that same driver instance parks
+  // too, and macOS is left with processes it cannot terminate at shutdown —
+  // suspected, not shown, to be behind two kernel panics the same day. A tool
+  // that measures the link must not be able to take the host down with it, and
+  // this one writes flat out at the panel, which is the surest way to find
+  // that state.
   //
-  // It costs nothing here either: retrying `EAGAIN` every 2ms measured
-  // 562.5 KB/s against 563.1 KB/s blocking, well inside the run-to-run spread
-  // this tool exists to report.
+  // The measurement it exists to make survives the change: retrying `EAGAIN`
+  // every 2ms gave 562.5 KB/s against 563.1 KB/s blocking, in one session on
+  // one board. No run-to-run spread has ever been published for this tool, so
+  // whether 0.6 KB/s is inside it is not something anybody can currently say —
+  // the only spread on record is 0.2 KB/s *within* a single run.
   const handle = await open(port, constants.O_RDWR | constants.O_NONBLOCK);
   const payload = Buffer.alloc(chunkBytes, 0xa5);
   const reports: Report[] = [];
