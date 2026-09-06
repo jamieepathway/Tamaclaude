@@ -41,6 +41,7 @@
  * silent-wrong-pack failure arriving through the tool built to detect it.
  * Naming them also makes `launchctl print` ground truth rather than a guess.
  */
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 
 import { EXIT_NO_PANEL } from './device.js';
@@ -323,4 +324,16 @@ export function describeInstallOutcome(
     return 'Installed. Plug the panel in and it starts itself within thirty seconds; there is nothing else to run.\n';
   }
   return `Installed, but it is not running. The log is at ${log}\n`;
+}
+
+/** What `launchctl list` says about our label, or undefined if it says nothing. */
+export function agentListing(): string | undefined {
+  try {
+    return execFileSync('launchctl', ['list', AGENT_LABEL], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch {
+    return undefined; // Not loaded.
+  }
 }

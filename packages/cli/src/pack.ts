@@ -329,3 +329,9 @@ export function resolvePack(lookup: Lookup = {}): ResolvedPack {
     source: 'default',
   };
 }
+
+/** One line naming the loaded pack and where it came from. */
+export function describePack(resolved: ResolvedPack): string {
+  const how = resolved.source === 'default' ? 'default' : '$TAMACLAUDE_PACK';
+  return `${resolved.parsed.name} at ${resolved.directory} (${how})`;
+}

@@ -148,6 +148,14 @@ function multiDocNodes(files: readonly string[]): readonly string[] {
  * are counts a person has to justify rather than a switch someone can flip.
  */
 const DELIBERATE: Readonly<Record<string, number>> = {
+  // Two, both headers, both read against the file on 6 Sep. The module header
+  // sits above the doc on `QuietHours` — the first explains why the daemon
+  // stops sending at all, the second what a window is. The second is the
+  // "meets the environment" header above `quietGate`, marking the boundary
+  // between the pure half this file tests against fixed clocks and the two
+  // thin wrappers that read `TAMACLAUDE_QUIET`. Neither belongs inside the
+  // doc beneath it.
+  'packages/cli/src/quiet.ts': 2,
   'packages/daemon/src/state.ts': 2,
   'packages/device/src/report.ts': 1,
   'packages/hooks/src/hook-settings.ts': 1,
