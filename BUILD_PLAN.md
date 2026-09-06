@@ -1285,7 +1285,7 @@ a hook cannot — `DONE_AFTER_MS` and `DONE_SHOWN_MS` in `effectiveState`, lande
       node and pnpm first, and a brew tap is a second repo and a formula for
       one Mac. This line said "one-line install" until 26 Aug, which would
       have had someone building a thing the plan had already ruled out.
-- [x] Flash the gift board (not the dev board) with the splash. **Done 2 Sep**,
+- [x] Flash the board with the splash. **Done 2 Sep**,
       the day it was handed over rather than on 19 Sep, because the gift moved.
       Verified by reading the app header back off the board: project `blitter`,
       version `46ea9e2`. Before flashing it read `arduino-lib-builder` — the

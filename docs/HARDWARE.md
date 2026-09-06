@@ -321,10 +321,10 @@ already named there.
 Kept here because nothing else can hold it: the binary is not in the repo, and
 the board cannot be asked what it will do, only what it was built from.
 
-| Flashed    | Built from | Board                            | What changed                                  |
-| ---------- | ---------- | -------------------------------- | --------------------------------------------- |
-| 2 Sep 2026 | `46ea9e2`  | the one now on the author's desk | Real splash art                               |
-| 6 Sep 2026 | `5db74eb`  | same board                       | `IDLE_BLANK_MS` — blanks after 30s of silence |
+| Flashed    | Built from | What changed                                  |
+| ---------- | ---------- | --------------------------------------------- |
+| 2 Sep 2026 | `46ea9e2`  | Real splash art                               |
+| 6 Sep 2026 | `5db74eb`  | `IDLE_BLANK_MS` — blanks after 30s of silence |
 
 **Read it off the board rather than trusting this table.** ESP-IDF stamps the
 app descriptor with `git describe`, which — no tags in this repo — falls back to
@@ -352,12 +352,19 @@ touched `main.c` for comments only, so a diff against the working tree will
 show changes the board does not have and does not need — check the code, not
 the prose, before concluding a reflash is due.
 
-**Anything reading this table should assume a panel might be on the older
-build.** `docs/INSTALL.md` describes the thirty-second blank as though every
-panel does it; a board still on `46ea9e2` holds its last frame for ever
-instead.
+With one board there is no panel on an older build, so `docs/INSTALL.md` can
+describe the thirty-second blank as simply what the panel does. **That stops
+being true the moment a second board exists** — one still on `46ea9e2` holds
+its last frame for ever instead — so a second board needs a row here before it
+needs anything else.
 
 ## Spares
+
+**Advice that was not taken: there is one board.** It was written before
+bring-up and it is still the right advice — everything below holds — but the
+project ran on a single board throughout, which is why §"Which firmware is on
+the board" has one row per flash rather than one per device, and why a reflash
+has always meant the working panel going down.
 
 Buy two boards. One to develop and reflash against, one to give. Replacement
 lead time is roughly a week, and September has no week to spare.
