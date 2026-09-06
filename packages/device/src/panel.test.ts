@@ -560,7 +560,11 @@ describe('a panel that wedges mid-write', () => {
 
     const status = panel.status();
     expect(status.phase).toBe('refused');
-    expect(status.refusal).toMatch(/unplug it and plug it back in/);
+    // Asserts the two things a person must actually do, because on 2026-09-06
+    // a replug alone was watched to be insufficient: the board came back and
+    // this refusal did not notice, so the panel stayed dark until a restart.
+    expect(status.refusal).toMatch(/unplug it from the hub/);
+    expect(status.refusal).toMatch(/restart the daemon/);
   }, 10_000);
 
   it('does not reopen the port after a wedge, however long it waits', async () => {
