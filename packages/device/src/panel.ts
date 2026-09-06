@@ -28,6 +28,7 @@ import {
   afterClose,
   afterOpen,
   afterRefresh,
+  afterReplug,
   afterReport,
   afterWedge,
   afterWrite,
@@ -166,6 +167,10 @@ type Runtime = {
   readonly stopped: boolean;
   /** Consecutive failed opens. Reset by a successful one, not accumulated. */
   readonly failures: number;
+  /** The device instance this port was opened on, per `SerialSystem`. */
+  readonly instance?: string;
+  /** The instance that was live when the link wedged, if it has. */
+  readonly wedgedInstance?: string;
 };
 
 type Ctx = {
@@ -214,10 +219,61 @@ function shutPort(ctx: Ctx): void {
   if (now.port) void now.port.close().catch(() => undefined);
 }
 
-/** Refuse the link because a write wedged, and let the port go. */
+/**
+ * Refuse the link because a write wedged, let the port go, and wait for a
+ * person.
+ *
+ * The refusal is still absorbing against the *timer*: reopening a board that
+ * has stopped accepting data was watched to wedge again inside seconds, and
+ * each attempt runs `stty` against a port that can park it for ever. What it is
+ * no longer absorbing against is somebody fixing the thing by hand. The
+ * instance that was live at this moment is remembered so `watchForReplug` can
+ * tell "still the same dead board" from "a new one has arrived".
+ */
 function wedgedOut(ctx: Ctx): void {
-  commit(ctx, afterWedge(ctx.state.read().link));
+  const now = ctx.state.read();
+  commit(ctx, afterWedge(now.link));
+  ctx.state.write({ ...ctx.state.read(), wedgedInstance: now.instance });
   shutPort(ctx);
+  watchForReplug(ctx);
+}
+
+/**
+ * Poll for the device node being replaced, which is what a replug looks like.
+ *
+ * Deliberately not a reconnect loop. It never opens anything and never runs
+ * `stty`; it asks `SerialSystem.instanceOf`, which is a `stat`, so it cannot
+ * park on the wedged port no matter how long it waits. The reconnect only
+ * happens once the answer has changed, at which point the port on the end of
+ * the cable is a freshly enumerated one and opening it is ordinary again.
+ */
+function watchForReplug(ctx: Ctx): void {
+  const now = ctx.state.read();
+  if (now.stopped || now.retry || !now.link.wedged) return;
+  const retry = setTimeout(() => {
+    ctx.state.write({ ...ctx.state.read(), retry: undefined });
+    void lookForReplug(ctx);
+  }, ctx.retryMs);
+  // Unref'd for the same reason every other timer here is: a panel nobody has
+  // come to rescue must not be what keeps the daemon alive.
+  retry.unref();
+  ctx.state.write({ ...ctx.state.read(), retry });
+}
+
+async function lookForReplug(ctx: Ctx): Promise<void> {
+  const now = ctx.state.read();
+  if (now.stopped || !now.link.wedged) return;
+  const instance = await ctx.serial.instanceOf(ctx.path).catch(() => undefined);
+  // `undefined` is the cable out and nothing plugged back in yet, which is
+  // half of a replug and not a reason to do anything. Waiting for a defined
+  // *and different* value means the retry only ever meets a live node.
+  if (instance !== undefined && instance !== now.wedgedInstance) {
+    commit(ctx, afterReplug(ctx.state.read().link));
+    ctx.state.write({ ...ctx.state.read(), wedgedInstance: undefined });
+    void attempt(ctx);
+    return;
+  }
+  watchForReplug(ctx);
 }
 
 function scheduleRetry(ctx: Ctx): void {
@@ -274,7 +330,12 @@ async function attempt(ctx: Ctx): Promise<void> {
       await port.close().catch(() => undefined);
       return;
     }
-    ctx.state.write({ ...ctx.state.read(), port, failures: 0 });
+    // Read after the open, not before: this is the instance the port in hand
+    // is actually on, and it is what `wedgedOut` will remember.
+    const instance = await ctx.serial
+      .instanceOf(ctx.path)
+      .catch(() => undefined);
+    ctx.state.write({ ...ctx.state.read(), port, failures: 0, instance });
     commit(ctx, afterOpen(ctx.state.read().link));
   } catch {
     // Absent is an ordinary state for a desk toy, not an error. The reason is

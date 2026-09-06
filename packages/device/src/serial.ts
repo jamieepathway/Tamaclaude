@@ -31,7 +31,7 @@
 import type { FileHandle } from 'node:fs/promises';
 
 import { execFile } from 'node:child_process';
-import { constants, open } from 'node:fs/promises';
+import { constants, open, stat } from 'node:fs/promises';
 import { promisify } from 'node:util';
 
 import { cell } from './cell.js';
@@ -154,6 +154,14 @@ export type SerialPort = {
 export type SerialSystem = {
   /** Open `path`, ready to write, with `watch` already draining it. */
   open(path: string, watch: SerialWatch): Promise<SerialPort>;
+  /**
+   * Which device instance is at `path` right now, or `undefined` for nothing.
+   *
+   * The identity, not the contents: two different values mean the node was
+   * recreated between the readings, which on this bus means the panel was
+   * physically unplugged and plugged back in.
+   */
+  instanceOf(path: string): Promise<string | undefined>;
 };
 
 const run = promisify(execFile);
@@ -341,7 +349,37 @@ async function openPort(path: string, watch: SerialWatch): Promise<SerialPort> {
   };
 }
 
+/**
+ * Identify the device node, without opening it.
+ *
+ * **`stat` and not `open`, and that is the entire point.** The caller uses this
+ * to decide whether to reconnect to a port that is currently wedged, and every
+ * way of asking the *port* that question is a way of getting stuck on it:
+ * `open(2)` on a wedged instance parks whatever flags it is given, and so does
+ * the `stty` in `raw`. `stat` touches the filesystem node rather than the
+ * driver, so it answers immediately however wedged the device is.
+ *
+ * Three fields because no one of them is enough. The minor number alone is
+ * not: on 2026-09-06 a replug came back as `9,3` both before and after, since
+ * macOS reuses a minor freed by the detach. The inode does change — 719, 725,
+ * 745 and 715 were observed at one path across four replugs in a session — but
+ * inodes are reused too, and 719 came round twice. `ctimeMs` is when the node
+ * was created, which a re-enumeration always moves. Any one of the three
+ * changing is a new instance; this only has to detect change, not be unique
+ * for ever.
+ */
+async function instanceAt(path: string): Promise<string | undefined> {
+  try {
+    const node = await stat(path);
+    return `${node.rdev}:${node.ino}:${node.ctimeMs}`;
+  } catch {
+    // No node at all — unplugged. Not an instance, and deliberately not an
+    // error: the caller is polling a path that spends time not existing.
+    return undefined;
+  }
+}
+
 /** The host's real serial stack. */
 export function nodeSerial(): SerialSystem {
-  return { open: openPort };
+  return { open: openPort, instanceOf: instanceAt };
 }

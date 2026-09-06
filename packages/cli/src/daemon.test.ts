@@ -45,6 +45,9 @@ function fakeSerial() {
     watch: undefined as SerialWatch | undefined,
   };
   const system: SerialSystem = {
+    // Always the same instance: this fake never models a replug, and a
+    // constant is the honest way to say so.
+    instanceOf: async (_path) => 'fake',
     open: async (_path, watch) => {
       await new Promise((done) => setTimeout(done, 0));
       state.watch = watch;
