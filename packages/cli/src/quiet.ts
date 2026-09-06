@@ -160,7 +160,8 @@ export function describeQuietHours(
   if (hours === undefined) return undefined;
   const drift =
     options.stale === true
-      ? ' (the plist says otherwise — reload it with `install-agent --apply`)'
+      ? ' (the plist says otherwise — reload with `launchctl bootout` then' +
+        ' `bootstrap`; `install-agent --apply` would keep the file, not this)'
       : '';
   const window = `${clockFace(hours.from)}-${clockFace(hours.to)}${drift}`;
   // Reuses the real predicate rather than re-deriving "inside", by asking it
@@ -226,15 +227,55 @@ export function quietSpecIn(sources: {
 }
 
 /**
+ * The window to *keep*, which is not the window in force.
+ *
+ * **Opposite precedence to `quietSpecIn`, deliberately.** Reporting asks what
+ * the daemon is doing, so the running job wins. Persisting asks what the
+ * person most recently said they wanted, and that is the file: somebody who
+ * hand-edits the plist and then reinstalls should not have the edit thrown
+ * away in favour of what the old job was still running.
+ *
+ * That is not hypothetical — it was measured. With running-first here,
+ * `install-agent --apply` wrote `23:00-07:00` over a plist freshly edited to
+ * `22:00-08:00`, then rebooted the job so both copies were gone. Which is the
+ * same defect this whole commit exists to fix, re-entered from the other side.
+ *
+ * The environment is deliberately not a source. There is nothing to carry
+ * forward on a fresh install, so it could only ever *invent* a window — an
+ * ambient `TAMACLAUDE_QUIET` in whatever shell ran the installer would become
+ * permanent config, silently.
+ */
+export function quietSpecToKeep(sources: {
+  readonly running?: string;
+  readonly plist?: string;
+}): string | undefined {
+  return (
+    quietSpecIn({ plist: sources.plist }) ??
+    quietSpecIn({ running: sources.running })
+  );
+}
+
+/**
  * Is the file promising something the running job is not doing?
  *
- * Only interesting when both exist and differ. A plist with a window and no
- * running job is not drift, it is a daemon that has not started yet.
+ * **`running === undefined` is "no job loaded", and a job loaded with no
+ * window is a different thing entirely** — the first draft collapsed them and
+ * was blind to the state it existed for. Somebody sets a window with
+ * PlistBuddy for the first time and forgets the reload: the job is up, has no
+ * window, and the file has one. That is maximal drift, and it reported none —
+ * `status` would announce a window in force while the panel stayed lit all
+ * night.
+ *
+ * Compared as parsed windows rather than as strings, so whitespace the two
+ * regexes treat differently cannot invent a disagreement between values that
+ * mean the same thing.
  */
 function quietIsStale(running?: string, plist?: string): boolean {
-  const live = quietSpecIn({ running });
-  const filed = quietSpecIn({ plist });
-  return live !== undefined && filed !== undefined && live !== filed;
+  if (running === undefined) return false; // Nothing loaded: not drift.
+  const live = parseQuietHours(quietSpecIn({ running }));
+  const filed = parseQuietHours(quietSpecIn({ plist }));
+  if (live === undefined && filed === undefined) return false;
+  return live?.from !== filed?.from || live?.to !== filed?.to;
 }
 
 /**

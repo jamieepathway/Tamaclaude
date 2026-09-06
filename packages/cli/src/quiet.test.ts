@@ -6,6 +6,8 @@ import {
   parseQuietHours,
   QUIET_WAKE_MS,
   quietSpecIn,
+  quietSpecToKeep,
+  quietStatusLine,
 } from './quiet.js';
 
 /** A local-time moment, because the window is local. See `quiet.ts`. */
@@ -160,15 +162,59 @@ describe('finding the window the daemon is actually using', () => {
   });
 
   it('says so when the file and the running job disagree', () => {
-    // The whole point of preferring the running job is that a person can be
-    // looking at a lit panel while the plist promises darkness. Saying which
-    // is in force, and that a reload would close the gap, is cheaper than
-    // letting them work it out.
-    const line = describeQuietHours(
-      parseQuietHours(quietSpecIn({ running, plist })),
-      at(23, 30),
-      { stale: true },
+    // Through `quietStatusLine`, the composition `status` actually calls. The
+    // first version of this test hand-passed `{ stale: true }` into
+    // `describeQuietHours` and asserted the wording — so it tested the
+    // sentence and never the detector, which is why the bug below shipped.
+    const line = quietStatusLine({ running, plist }, at(23, 30));
+    expect(line).toContain('22:00-08:00');
+    expect(line).toMatch(/plist says otherwise/);
+    // And it must not send you to the command that would overwrite the file.
+    expect(line).not.toMatch(/install-agent --apply` would reload/);
+  });
+
+  it('flags a loaded job that has no window while the file has one', () => {
+    // **The state the detector was blind to, and the commonest one there is:**
+    // somebody sets a window with PlistBuddy for the first time and forgets
+    // the reload. The job is up and has never heard of it. Reporting "no
+    // drift" here announced a window in force while the panel stayed lit all
+    // night — the original bug inverted.
+    const bare = `\tenvironment = {\n\t\tTAMACLAUDE_PACK => /p\n\t}`;
+    const line = quietStatusLine({ running: bare, plist }, at(23, 30));
+    expect(line).toMatch(/plist says otherwise/);
+  });
+
+  it('does not cry drift when no job is loaded at all', () => {
+    // A file with a window and no daemon is a daemon that has not started, not
+    // a disagreement. Distinguishable only because `agentEnvironment` returns
+    // `undefined` when `launchctl print` fails.
+    expect(quietStatusLine({ plist }, at(23, 30))).not.toMatch(/otherwise/);
+  });
+
+  it('does not cry drift over whitespace two regexes read differently', () => {
+    // The running matcher trims, the plist matcher does not. Compared as raw
+    // strings these disagree; as windows they are identical.
+    const padded = plist.replace(
+      '<string>23:00-07:00</string>',
+      '<string> 23:00-07:00 </string>',
     );
-    expect(line).toMatch(/reload|install-agent/i);
+    const same = `\tenvironment = {\n\t\tTAMACLAUDE_QUIET => 23:00-07:00\n\t}`;
+    expect(
+      quietStatusLine({ running: same, plist: padded }, at(23, 30)),
+    ).not.toMatch(/otherwise/);
+  });
+
+  it('keeps the file, not the running job, when reinstalling', () => {
+    // Opposite precedence to reporting, and the reason is a measured bug:
+    // running-first here wrote the old window over a plist somebody had just
+    // edited, then rebooted the job so both copies were gone.
+    expect(quietSpecToKeep({ running, plist })).toBe('23:00-07:00');
+  });
+
+  it('never invents a window from the ambient environment', () => {
+    // A fresh install has nothing to carry forward, so an `env` source could
+    // only ever bake whatever was exported in the installing shell into the
+    // plist permanently.
+    expect(quietSpecToKeep({})).toBeUndefined();
   });
 });

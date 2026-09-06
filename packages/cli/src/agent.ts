@@ -182,7 +182,10 @@ export function describeAgentInstall(
     `script     ${options.script}\n` +
     `pack       ${options.pack}\n` +
     `socket     ${options.socket}\n` +
-    `log        ${options.log}\n`
+    `log        ${options.log}\n` +
+    // The setting this command used to delete is the one the dry run could
+    // not show. "off" rather than blank, because absent is a real answer.
+    `quiet      ${options.quiet ?? 'off'}\n`
   );
 }
 

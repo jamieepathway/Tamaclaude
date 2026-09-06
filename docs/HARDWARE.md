@@ -141,8 +141,13 @@ for it before theorising.
 **Since 6 Sep the bars only last thirty seconds.** `colour-bars.ts` paints,
 holds the port briefly and exits, and `IDLE_BLANK_MS` reads a host that has
 stopped talking as a host that has gone — which is exactly right for the
-daemon and a nuisance for a one-shot painter. `tools/blit.ts` has the same
-shape once its animation ends. Look at the glass promptly, or re-run the tool;
+daemon and a nuisance for a one-shot painter. `tools/blit.ts` does **not** — an earlier version of this
+paragraph said it did. It sets `REPRIME_MS = 5000` and writes a whole frame
+every five seconds regardless of whether anything changed, so it is never
+silent for thirty seconds while running. That is its own undeclared
+dependency on `IDLE_BLANK_MS`, and `packages/device/src/panel.test.ts` does
+not gate it — the test reads `panel.ts` and `main.c` only. Raise `REPRIME_MS`
+past 30000 and a live panel blanks mid-run under a tool reporting healthy fps. Look at the glass promptly, or re-run the tool;
 the panel is not faulty and nothing was lost. This is the one case the retired
 "an idle timeout would wipe a legitimately still frame" argument was right
 about, and it survives because these tools are not the daemon. Photographs are not evidence here: a warm-lit room
@@ -180,8 +185,9 @@ that rule is written about art slippage, "with placeholder art if necessary",
 so an enclosure is its general clause rather than its subject. Nor is
 it the only item with an unbounded tail — the clean-account dry run's bad
 branch is "a packaging project rather than a bug fix" in the plan's own words,
-and the gift-board flash is a rebuild against a toolchain last exercised in
-August.
+and the gift-board flash was, at the time this was written, a rebuild against
+a toolchain last exercised in August. That has since happened twice — 2 Sep
+and 6 Sep — and §Rebuilding records what each cost.
 
 **Nor is it the only item depending on somebody else's calendar, and this
 paragraph said it was for a day.** That claim was falsified by the item named
@@ -230,9 +236,9 @@ the board, which is a useful reference point for anything built to hold it.
 Recorded here because it was an open checklist item since 20 Aug, and because a
 sourced figure a reader can check beats a measurement nobody wrote down.
 
-## Rebuilding the firmware, when the toolchain has rotted
+## Rebuilding the firmware, when the toolchain fights back
 
-The blitter is flashed once and never touched, which means the toolchain is
+The blitter is flashed rarely, which means the toolchain is
 cold every time anybody needs it. On 2 Sep a rebuild took four fixes before
 `idf.py build` would run at all, on a machine where ESP-IDF v5.3.2 and the
 RISC-V toolchain were both already installed. In order:
@@ -278,17 +284,33 @@ for the default Xtensa target, and the next build asks for
 So the four fixes above did not recur. **The tempting conclusion — that they
 were symptoms of a rotted install — is not what the evidence shows**, because
 fix 2 blames `install.sh` itself ("the installer pulls 0.19, whose API it does
-not accept"), and a fresh `install.sh` should have reproduced that. What
-actually differed is in a directory name: the rotted environment was
-`idf5.3_py3.9_env`, the fresh one is `idf5.3_py3.14_env`. Different Python,
-different wheel resolution, a different `ruamel.yaml.clib` story.
+not accept"), and a fresh `install.sh` should have reproduced that. It did.
+Measured in the fresh environment on 6 Sep:
 
-So the usable rule is about Python, not about freshness: on 3.14 none of the
-four bit; on 3.9 expect all of them. Check `ls ~/.espressif/python_env` before
-deciding which half of this section applies to you. One run each way is thin
-evidence for a mechanism, and it is stated as a lead rather than a finding.
+```
+ruamel.yaml            0.19.1
+ruamel.yaml.clib       NOT INSTALLED
+pyclang                0.7.0
+import pyclang         OK
+```
 
-That numbered list is the _rotted_ path. On it, `idf.py fullclean` before
+So the exact condition fix 2 blames — 0.19 installed, no C extension — was
+reproduced and did not bite. That kills "the install had rotted" as the
+explanation, and it is as far as the evidence goes.
+
+**Two candidates remain and one run each way cannot separate them.** The Python
+moved (`idf5.3_py3.9_env` then, `idf5.3_py3.14_env` now — the only trace of the
+old environment left) and `pyclang` moved (0.7.0 now, unrecoverable then). A
+newer `pyclang` that simply accepts ruamel 0.19 explains every observation
+without Python entering into it, and it is the likelier of the two.
+
+An earlier version of this paragraph picked the Python and wrote it as the
+usable rule. It was reasoning from a directory name, which records the Python
+version and nothing else. If the four bite you, start from the list; if they do
+not, record your `pyclang` and Python versions beside the outcome, because two
+data points would settle this and one cannot.
+
+That numbered list is the path where the four bite. On it, `idf.py fullclean` before
 building: a build directory left from an earlier Python refuses to configure
 against a new one, and says so clearly. The fresh recipe above has no build
 directory to clean — its equivalent trap is the `set-target` ordering, which is
@@ -304,16 +326,31 @@ the board cannot be asked what it will do, only what it was built from.
 | 2 Sep 2026 | `46ea9e2`  | the one now on the author's desk | Real splash art                               |
 | 6 Sep 2026 | `5db74eb`  | same board                       | `IDLE_BLANK_MS` — blanks after 30s of silence |
 
+**Read it off the board rather than trusting this table.** ESP-IDF stamps the
+app descriptor with `git describe`, which — no tags in this repo — falls back to
+the short hash, plus `-dirty` when the working tree did not match it. The
+version field is 32 bytes at `0x30` into the app image, and the app partition
+starts at `0x10000`:
+
+```bash
+. ~/esp/esp-idf/export.sh
+esptool.py --chip esp32c6 -p /dev/cu.usbmodem* read_flash 0x10030 32 /tmp/v.bin
+strings /tmp/v.bin | head -1
+```
+
+Run against the desk board on 6 Sep that returned `5db74eb`, clean — which is
+what makes row 2 a measurement rather than a claim, and the same check produced
+row 1's `46ea9e2`. A `-dirty` suffix means the build matched no commit and the
+row cannot be trusted at all.
+
+**These hashes are branch-local.** `main` is squash-merged, so `5db74eb` will
+not resolve in a fresh clone once this lands, and the board will keep reporting
+a hash the repo no longer contains. Match on the date when that happens.
+
 The hash is the commit whose _behaviour_ is on the board. Later commits have
 touched `main.c` for comments only, so a diff against the working tree will
 show changes the board does not have and does not need — check the code, not
 the prose, before concluding a reflash is due.
-
-Read the app header back off the board to check, rather than trusting this
-table — `esptool.py read_flash` at the app offset, or the version line the
-build prints. A table in a doc is a claim; the header is the measurement, and
-this row exists because the 2 Sep row was verified that way and the habit is
-worth keeping.
 
 **Anything reading this table should assume a panel might be on the older
 build.** `docs/INSTALL.md` describes the thirty-second blank as though every

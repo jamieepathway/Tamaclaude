@@ -19,7 +19,7 @@ Claude Code hooks -> tamaclaude-notify -> daemon -> USB-CDC -> ESP32-C6 panel
 
 Unlike upstream, **all rendering happens on your Mac in TypeScript**. The
 device receives dirty rectangles of RLE-compressed RGB565 and blits them to the
-display. It's flashed once and never again — every screen, animation and theme
+display. It's flashed rarely — twice so far — and every screen, animation and theme
 change is a host-side code change.
 
 That also means the whole thing runs without hardware: the renderer draws to a

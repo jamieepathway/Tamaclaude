@@ -20,12 +20,23 @@
 
 ## The date has been overtaken
 
-**The board was handed over on 2 Sep and is now the author's own**, so the
-23 Sep delivery, the 13 Sep feature freeze and the 14–18 Sep soak below no
-longer gate anything. Every stage still reasons from that schedule; read it as
-history rather than as a plan. What replaces it is ordinary maintenance on a
-device somebody uses daily, which is why work has continued past the freeze —
-see Stage 2's exit for the two firmware changes that cost a reflash each.
+**The board was handed over on 2 Sep and now sits on the author's desk**, so
+the 23 Sep delivery date no longer gates anything: the thing it was a deadline
+for has already happened, three weeks early. What replaces it is ordinary
+maintenance on a device somebody uses daily — see Stage 2's exit for the two
+firmware changes that cost a reflash each.
+
+**That is not the same as the whole schedule being void, and an earlier version
+of this section said it was.** It also claimed work had "continued past the
+freeze", which was simply wrong: the freeze is 13 Sep and this was written on
+the 6th. What is dead is the _delivery_ date. The 13 Sep freeze and the 14–18
+Sep soak were never about delivery — they were about not shipping untested
+changes to somebody else's desk, and the desk is now the author's, which
+changes who bears the risk rather than whether the risk exists.
+
+So Stage 6's open items still stand on their own merits. The clean-account
+install dry run in particular: its purpose is proving a Mac that is not this
+one can build this repo, and nothing about ownership touches that.
 
 Nothing below has been rewritten to match, deliberately: the reasoning in each
 stage is worth keeping as it was written, and back-dating it would destroy the

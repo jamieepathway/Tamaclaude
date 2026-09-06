@@ -7,7 +7,9 @@
 Every frame is composed in TypeScript on the host. The ESP32-C6 receives dirty
 rectangles as RLE-compressed RGB565 over USB-CDC and pushes them to the ST7789
 over SPI. It contains no scene graph, no sprites, no state machine, and no
-knowledge of Claude Code. It is flashed once and never again.
+knowledge of Claude Code. It is flashed rarely: twice since bring-up, and
+`BUILD_PLAN.md`'s Stage 2 exit records both, because each cost physical access
+to the board.
 
 Upstream clawd-tank does the opposite: sprites live in device flash, the host
 sends state, and an LVGL UI in C renders on-device. That is the better design
@@ -165,7 +167,8 @@ whether anything is running. This is the only asset stored on the device.
 
 That sentence used to end "and the obvious proxy for it would wipe a
 legitimately still frame", which stopped being true on 6 Sep. The proxy is a
-timeout on _silence_, and the _daemon_ is never silent while online — `panel.ts`
+timeout on _silence_, and the daemon is not silent while online _unless it is
+asked to be_ — `panel.ts`
 §REFRESH_MS owes a whole frame every five seconds and `daemon.ts` §paintOnce
 pays it. So the panel now blanks after thirty seconds without a packet, and the
 splash is exempt from it. `packages/device/src/panel.test.ts` gates the two

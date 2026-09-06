@@ -217,8 +217,9 @@ below is usually not a fault at all.
 
 **The panel is completely dark — no picture, no glow.** Most often this is
 working as intended. The panel turns its backlight off after **thirty seconds**
-with nothing arriving from the Mac, so a dark panel usually means the Mac is
-asleep, or the daemon is not running. It comes back on its own, within a couple
+with nothing arriving from the Mac, so a dark panel usually means one of three
+things: quiet hours are in force, the Mac is asleep, or the daemon is not
+running. It comes back on its own, within a couple
 of seconds, as soon as the Mac has something to send.
 
 So check in this order:
@@ -299,40 +300,6 @@ this mode looks identical over USB and driving the wrong one would report
 itself working. `status` says `loaded but not running; last exit 2 — see the
 log`, and the log names both devices. Unplug one.
 
-## Quiet hours
-
-Off unless you set it. When set, the panel goes dark overnight instead of
-lighting an empty room — but **not while you are working**, because a window
-that blanked the panel mid-session would be worse than the lamp it replaces.
-
-Set it in the agent's own environment:
-
-```bash
-/usr/libexec/PlistBuddy -c \
-  "Add :EnvironmentVariables:TAMACLAUDE_QUIET string 23:00-07:00" \
-  ~/Library/LaunchAgents/com.tamaclaude.daemon.plist
-launchctl bootout "gui/$(id -u)/com.tamaclaude.daemon"
-launchctl bootstrap "gui/$(id -u)" \
-  ~/Library/LaunchAgents/com.tamaclaude.daemon.plist
-```
-
-`HH:MM-HH:MM`, 24-hour, and it may cross midnight. Anything it cannot read
-means off, so a typo leaves the panel behaving exactly as it did before rather
-than dark at some surprising hour.
-
-The reload matters: editing the file alone changes what is _configured_, not
-what the running daemon is doing. `status` reports the running job and will
-tell you when the two disagree.
-
-Once set it survives `install-agent --apply`, which rewrites the rest of that
-file. It did not always — before 6 Sep the documented repair silently deleted
-it.
-
-**What happens:** inside the window, five minutes after your last activity in
-Claude Code the daemon stops sending, and thirty seconds later the panel goes
-dark. Anything you do lights it again almost immediately. Outside the window
-nothing changes.
-
 If none of those, the log is at `~/.tamaclaude/daemon.log` — written only by
 the automatic startup from step 6, so it will not exist if you never got that
 far.
@@ -401,3 +368,59 @@ cd ~/Tamaclaude          # or wherever you put it
 ```
 
 Nothing is installed globally, and there is nothing on your `PATH` to go stale.
+
+## Quiet hours
+
+Off unless you set it. When set, the panel goes dark overnight instead of
+lighting an empty room — but **not while you are working**, because a window
+that blanked the panel mid-session would be worse than the lamp it replaces.
+
+Set it in the agent's own environment:
+
+```bash
+/usr/libexec/PlistBuddy -c \
+  "Add :EnvironmentVariables:TAMACLAUDE_QUIET string 23:00-07:00" \
+  ~/Library/LaunchAgents/com.tamaclaude.daemon.plist
+launchctl bootout "gui/$(id -u)/com.tamaclaude.daemon"
+launchctl bootstrap "gui/$(id -u)" \
+  ~/Library/LaunchAgents/com.tamaclaude.daemon.plist
+```
+
+`Add` only works the first time. **To change a window use `Set`; to turn it off
+use `Delete`.** `Add` on a key that already exists fails with `Entry Already
+Exists` and changes nothing — which looks like success if you do not read the
+output:
+
+```bash
+/usr/libexec/PlistBuddy -c \
+  "Set :EnvironmentVariables:TAMACLAUDE_QUIET 22:00-08:00" \
+  ~/Library/LaunchAgents/com.tamaclaude.daemon.plist   # change it
+
+/usr/libexec/PlistBuddy -c \
+  "Delete :EnvironmentVariables:TAMACLAUDE_QUIET" \
+  ~/Library/LaunchAgents/com.tamaclaude.daemon.plist   # turn it off
+```
+
+Reload after any of the three, exactly as above.
+
+`HH:MM-HH:MM`, 24-hour, and it may cross midnight. Anything it cannot read
+means off, so a typo leaves the panel behaving exactly as it did before rather
+than dark at some surprising hour.
+
+The reload matters: editing the file alone changes what is _configured_, not
+what the running daemon is doing. `status` reports the running job and will
+tell you when the two disagree.
+
+**Reload before you reinstall.** `install-agent --apply` carries forward
+whatever the _running_ daemon has, so a plist you edited but did not reload
+gets overwritten with the old window rather than the new one. Same order every
+time: edit, reload, reinstall.
+
+Once set it survives `install-agent --apply`, which rewrites the rest of that
+file. It did not always — before 6 Sep the documented repair silently deleted
+it.
+
+**What happens:** inside the window, five minutes after your last activity in
+Claude Code the daemon stops sending, and thirty seconds later the panel goes
+dark. Anything you do lights it again almost immediately. Outside the window
+nothing changes.

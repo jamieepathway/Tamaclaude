@@ -3,10 +3,20 @@
 A tiny desk display for your Claude Code sessions. An animated pixel crab
 (Clawd) lives on a 172×320 panel and reacts to what Claude is doing.
 
-**This is a birthday gift with an immovable date: Wednesday 23 September 2026.**
-When a trade-off appears between scope and the date, the date wins. See
-`BUILD_PLAN.md` for stages and `.claude/research/foundations/brief.md` for why
-the architecture is what it is.
+**It was built as a birthday gift against an immovable date, Wednesday 23
+September 2026 — and the board was handed over on 2 Sep, three weeks early.**
+So the deadline that shaped every decision below is spent: it explains why
+things are the way they are, and it no longer decides anything. A trade-off
+between scope and that date is not a trade-off any more.
+
+What replaces it is a device somebody uses daily, which is a higher bar in one
+specific way — a wrong decision now reaches a working panel on a desk rather
+than an unshipped one. `BUILD_PLAN.md` §"The date has been overtaken" carries
+the detail, including which parts of the schedule are genuinely dead and which
+stand on their own merits.
+
+See `BUILD_PLAN.md` for stages and `.claude/research/foundations/brief.md` for
+why the architecture is what it is.
 
 ## Commands
 
@@ -34,7 +44,8 @@ fail in a way that only reproduces in CI.
 
 **The Mac renders, the device blits.** Every frame is rendered in TypeScript on
 the host; the ESP32-C6 receives dirty rectangles as RLE-compressed RGB565 over
-USB-CDC and pushes them to SPI. The firmware is flashed once and never changes.
+USB-CDC and pushes them to SPI. The firmware is flashed rarely — twice since
+bring-up, and `BUILD_PLAN.md`'s Stage 2 exit records both and what each cost.
 
 This is a deliberate divergence from upstream clawd-tank, which renders
 on-device in C with LVGL. The consequence that matters: there is no separate

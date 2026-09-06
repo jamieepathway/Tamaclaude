@@ -206,7 +206,7 @@
  * there is no long still frame on this wire. Three links, and the first draft
  * of this comment named the wrong file for one of them:
  *
- *   - `packages/device/src/panel.ts:52` sets `REFRESH_MS = 5000` and fires
+ *   - `packages/device/src/panel.ts` §REFRESH_MS is 5000, and fires
  *     `afterRefresh` on that interval.
  *   - `packages/device/src/link.ts` §afterRefresh marks `needsPrime`. It marks
  *     a debt; it writes nothing.
@@ -309,10 +309,16 @@ static void backlight_set(bool lit) {
  *
  * `stat_rects == 0` is the guard that keeps the splash's meaning intact. A
  * panel nothing has ever driven keeps its splash however long it waits,
- * because that picture is the diagnostic — `app_main` records the rule: "the
- * splash means nothing has ever driven this panel, and a dark panel still
- * means a fault". Blanking on a timer would collapse those two into one. Only
- * a panel that has been driven and then abandoned goes dark.
+ * because that picture is the diagnostic. Blanking on a timer would collapse
+ * "never driven" and "driven and abandoned" into one state, and the splash is
+ * the only thing that tells them apart. Only a panel that has been driven and
+ * then abandoned goes dark.
+ *
+ * `app_main` used to be quoted here as saying "a dark panel still means a
+ * fault", and it retires that rule 480 lines below — in the same file, in the
+ * same commit that wrote this. Quoting a neighbour is how a comment goes stale
+ * without anybody editing it; the rule this guard actually depends on is the
+ * splash's, which still holds.
  */
 static void idle_check(void) {
   if (stat_rects == 0 || !backlight_lit) return;

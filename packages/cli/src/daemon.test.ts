@@ -275,16 +275,22 @@ describe('the daemon command', () => {
       // than a window: somebody working at one in the morning keeps their panel.
       // That only works if the daemon hands over a *live* `lastEventAt`.
       const serial = fakeSerial();
+      // Collected, then asserted after the wait. Asserting inside the callback
+      // throws into `void painting(...)`, which surfaces as an unhandled
+      // rejection attributed to the file rather than the test — and kills the
+      // paint loop, so later assertions test nothing.
       const seen: (number | undefined)[] = [];
+      const clocks: number[] = [];
       await start(serial.system, {
         quiet: (now, lastEventAt) => {
+          clocks.push(now);
           seen.push(lastEventAt);
-          expect(now).toBe(NOW);
           return true;
         },
       });
       await delay(60);
       expect(seen.length).toBeGreaterThan(0);
+      expect(clocks.every((at) => at === NOW)).toBe(true);
       // Never `undefined`: `registry.ts` seeds `lastEventAt` at boot, which is
       // why `quiet.ts` §isQuiet documents that branch as unreachable from here.
       expect(seen.every((at) => typeof at === 'number')).toBe(true);
