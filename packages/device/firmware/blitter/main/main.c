@@ -196,6 +196,31 @@
  * us spend the link talking about it. */
 #define REPORT_INTERVAL_MS 1000
 
+/*
+ * How long a silent line means the host has gone, and the backlight goes off.
+ *
+ * **The comment in `app_main` used to argue this could not be done**, on the
+ * grounds that "the closest proxy, an idle timeout, would wipe the screen
+ * during any long still frame. A crab asleep is a legitimate picture." The
+ * objection was right about what would break it and wrong that it applies:
+ * there is no long still frame on this wire. `packages/device/src/link.ts`
+ * §afterRefresh marks a whole frame owed every `REFRESH_MS` — 5,000ms — and
+ * `packages/cli/src/daemon.ts` §painting re-arms itself every `FRAME_MS`
+ * (125ms) for the life of the process. A sleeping crab is repainted in full
+ * twelve times a minute. Silence on this link does not mean a still picture;
+ * it means nothing is driving the panel at all.
+ *
+ * Thirty seconds is six times the interval that has to lapse, so it takes six
+ * consecutive missed refreshes to blank. `await_header` already wakes every
+ * `HUNT_SLICE_MS` on a quiet line, so the check costs one comparison a second
+ * and no new timer.
+ *
+ * What this buys is not only the brightness. A panel whose host has stopped
+ * used to hold its last frame indefinitely — a stale picture that reads as a
+ * live one, which is the failure industrial HMIs blank the screen to avoid.
+ */
+#define IDLE_BLANK_MS 30000
+
 /* ---------------------------------------------------------------- buffers */
 
 /*
@@ -231,6 +256,44 @@ static uint32_t stat_rects;    /* rectangles blitted */
 static uint32_t stat_resyncs;  /* episodes of being lost */
 static uint32_t stat_dropped;  /* bytes discarded while lost */
 static uint32_t stat_aborted;  /* packets abandoned mid-payload */
+
+/* --------------------------------------------------------------- backlight */
+
+/* When the host was last heard from, and whether the panel is lit. Both are
+ * zero-initialised, which is the correct start: nothing heard, nothing lit. */
+static uint32_t last_traffic_ms;
+static bool backlight_lit;
+
+/* Milliseconds since boot, wrapping at 49 days. Unsigned subtraction against
+ * it stays correct across the wrap, which is why every comparison here is
+ * written `now - then < limit` rather than `now < then + limit`. */
+static uint32_t now_ms(void) {
+  return (uint32_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
+}
+
+/* Idempotent, so callers can assert the state they want on every packet
+ * without a GPIO write per frame. */
+static void backlight_set(bool lit) {
+  if (lit == backlight_lit) return;
+  ESP_ERROR_CHECK(gpio_set_level(PIN_BL, lit ? 1 : 0));
+  backlight_lit = lit;
+}
+
+/*
+ * Blank a panel whose host has stopped talking. See `IDLE_BLANK_MS`.
+ *
+ * `stat_rects == 0` is the guard that keeps the splash's meaning intact. A
+ * panel nothing has ever driven keeps its splash however long it waits,
+ * because that picture is the diagnostic — `app_main` records the rule: "the
+ * splash means nothing has ever driven this panel, and a dark panel still
+ * means a fault". Blanking on a timer would collapse those two into one. Only
+ * a panel that has been driven and then abandoned goes dark.
+ */
+static void idle_check(void) {
+  if (stat_rects == 0 || !backlight_lit) return;
+  if (now_ms() - last_traffic_ms < IDLE_BLANK_MS) return;
+  backlight_set(false);
+}
 
 /* ------------------------------------------------------------------- panel */
 
@@ -425,6 +488,11 @@ static size_t stream_fill(TickType_t wait) {
     int read = usb_serial_jtag_read_bytes(rx, RX_CHUNK, wait);
     rx_pos = 0;
     rx_len = read > 0 ? (size_t)read : 0;
+    /* The one place bytes enter from the host, so the one place liveness is
+     * observable. Deliberately any byte rather than any valid packet: a host
+     * sending garbage is still a host, and a dark panel is the wrong way to
+     * report a protocol fault when the counters already do it. */
+    if (read > 0) last_traffic_ms = now_ms();
   }
   return rx_len - rx_pos;
 }
@@ -471,7 +539,7 @@ static void report(void) {
 
   /* Unsigned subtraction, so the tick counter's wrap at 49 days costs one
    * early report rather than 49 days of silence. */
-  uint32_t now = (uint32_t)xTaskGetTickCount() * portTICK_PERIOD_MS;
+  uint32_t now = now_ms();
   if (now - last_report_ms < REPORT_INTERVAL_MS) return;
   last_report_ms = now;
   reported_rects = stat_rects;
@@ -579,6 +647,9 @@ static void await_header(rect_header_t *out) {
         /* Quiet line. Nothing is wrong; surface the counters and keep waiting.
          * The bytes already held stay held — the packet may simply be split. */
         report();
+        /* Quiet for a second is ordinary. Quiet for IDLE_BLANK_MS is a host
+         * that has gone, and this is the only place that ever notices. */
+        idle_check();
         continue;
       }
       held++;
@@ -659,7 +730,7 @@ void app_main(void) {
    * arrives it belongs on the host anyway, as a protocol message, and this
    * line becomes a ledc_channel_config.
    */
-  ESP_ERROR_CHECK(gpio_set_level(PIN_BL, 1));
+  backlight_set(true);
 
   usb_serial_jtag_driver_config_t usb = USB_SERIAL_JTAG_DRIVER_CONFIG_DEFAULT();
   usb.rx_buffer_size = RX_RING_BYTES;
@@ -691,6 +762,10 @@ void app_main(void) {
     }
 
     blit(header.x, header.y, header.width, header.height);
+    /* After the blit, not before it. Waking on the arrival of a header would
+     * light the panel on whatever the controller's RAM still held — the stale
+     * frame from before it went dark — for as long as the payload took. */
+    backlight_set(true);
     stat_rects++;
     report();
   }
