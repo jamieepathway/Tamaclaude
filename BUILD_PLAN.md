@@ -20,7 +20,7 @@
 
 ## The date has been overtaken
 
-**The board was handed over on 2 Sep and now sits on the author's desk**, so
+**The board was handed over on 2 Sep and now sits on the recipient's desk**, so
 the 23 Sep delivery date no longer gates anything: the thing it was a deadline
 for has already happened, three weeks early. What replaces it is ordinary
 maintenance on a device somebody uses daily — see Stage 2's exit for the two
@@ -31,8 +31,9 @@ of this section said it was.** It also claimed work had "continued past the
 freeze", which was simply wrong: the freeze is 13 Sep and this was written on
 the 6th. What is dead is the _delivery_ date. The 13 Sep freeze and the 14–18
 Sep soak were never about delivery — they were about not shipping untested
-changes to somebody else's desk, and the desk is now the author's, which
-changes who bears the risk rather than whether the risk exists.
+changes to somebody else's desk. That desk now has the board on it, which
+changes when the risk lands rather than whether it exists: a bad change reaches
+a panel somebody is using today instead of one still in a drawer.
 
 So Stage 6's open items still stand on their own merits. The clean-account
 install dry run in particular: its purpose is proving a Mac that is not this
