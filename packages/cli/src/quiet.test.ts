@@ -5,6 +5,7 @@ import {
   isQuiet,
   parseQuietHours,
   QUIET_WAKE_MS,
+  quietSpecIn,
 } from './quiet.js';
 
 /** A local-time moment, because the window is local. See `quiet.ts`. */
@@ -112,5 +113,43 @@ describe('saying so in `status`', () => {
     const line = describeQuietHours(night, at(12));
     expect(line).toContain('23:00-07:00');
     expect(line).not.toMatch(/dark now/);
+  });
+});
+
+describe('finding the window the daemon is actually using', () => {
+  const plist = `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TAMACLAUDE_PACK</key>
+    <string>/Users/someone/.tamaclaude/pack</string>
+    <key>TAMACLAUDE_QUIET</key>
+    <string>23:00-07:00</string>
+  </dict>
+</dict></plist>`;
+
+  it('reads it out of the plist, because that is the daemon environment', () => {
+    // The bug this exists for: `status` first read its own `process.env`, and
+    // the variable lives in the launchd plist. It reported nothing while the
+    // daemon was observing the window perfectly — the one case the line was
+    // added to explain.
+    expect(quietSpecIn(plist, undefined)).toBe('23:00-07:00');
+  });
+
+  it('does not confuse it with the pack sitting next to it', () => {
+    expect(quietSpecIn(plist, undefined)).not.toContain('pack');
+  });
+
+  it('falls back to the environment for a daemon run by hand', () => {
+    expect(quietSpecIn(undefined, '09:00-17:00')).toBe('09:00-17:00');
+  });
+
+  it('prefers the plist, which is what the running daemon was given', () => {
+    expect(quietSpecIn(plist, '09:00-17:00')).toBe('23:00-07:00');
+  });
+
+  it('is nothing when neither has it', () => {
+    expect(quietSpecIn(undefined, undefined)).toBeUndefined();
+    expect(quietSpecIn('<plist><dict/></plist>', undefined)).toBeUndefined();
   });
 });

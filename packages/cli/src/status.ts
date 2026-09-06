@@ -8,18 +8,19 @@
  * environment, and writes sentences. It decides nothing the rest of the CLI
  * needs.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import process from 'node:process';
 
 import {
   agentListing,
+  agentPlistPath,
   describeAgentStatus,
   parseAgentStatus,
 } from './agent.js';
 import { daemonLogPath } from './log.js';
 import { describePack, resolvePack } from './pack.js';
-import { quietStatusLine } from './quiet.js';
+import { quietSpecIn, quietStatusLine } from './quiet.js';
 
 /**
  * The pack line, including when there is no pack.
@@ -63,6 +64,22 @@ export function status(): void {
     process.execPath;
   process.stdout.write(`${describeAgentStatus(parsed, existsSync(node))}\n`);
   process.stdout.write(`pack      ${packStatus()}\n`);
-  process.stdout.write(quietStatusLine(process.env['TAMACLAUDE_QUIET']));
+  process.stdout.write(
+    quietStatusLine(
+      quietSpecIn(
+        readIfPresent(agentPlistPath(homedir())),
+        process.env['TAMACLAUDE_QUIET'],
+      ),
+    ),
+  );
   process.stdout.write(`log       ${daemonLogPath(homedir())}\n`);
+}
+
+/** The plist, or nothing when the agent was never installed. */
+function readIfPresent(path: string): string | undefined {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return undefined;
+  }
 }

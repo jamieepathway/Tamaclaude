@@ -153,6 +153,33 @@ export function quietGate(
   return (now, lastEventAt) => isQuiet(hours, now, lastEventAt);
 }
 
+/**
+ * The window the *daemon* was given, which is not the same as this process's.
+ *
+ * **`status` reported nothing while the feature worked perfectly**, because it
+ * read its own `process.env` and the variable lives in the launchd plist. The
+ * daemon had it; the command describing the daemon did not. `launchctl list`
+ * is no help — it prints `ProgramArguments` and omits `EnvironmentVariables`
+ * entirely — so the plist file is the only source, and it is the right one:
+ * it is what launchd hands the process.
+ *
+ * The environment is the fallback rather than the primary for the same reason.
+ * A `tamaclaude daemon` run by hand takes the window from the shell that
+ * started it, and there is no plist in that story at all.
+ */
+export function quietSpecIn(
+  plist: string | undefined,
+  env: string | undefined,
+): string | undefined {
+  // Anchored on the key so the pack sitting beside it in the same dict cannot
+  // match, and tolerant of the whitespace `plutil` and PlistBuddy disagree on.
+  const found =
+    plist === undefined
+      ? null
+      : /<key>TAMACLAUDE_QUIET<\/key>\s*<string>([^<]*)<\/string>/u.exec(plist);
+  return found?.[1] ?? env;
+}
+
 /** The `status` line, ready to write — empty when the feature is off. */
 export function quietStatusLine(spec: string | undefined): string {
   const line = describeQuietHours(parseQuietHours(spec), Date.now());
