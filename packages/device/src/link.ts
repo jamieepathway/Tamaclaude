@@ -154,11 +154,24 @@ function refusalFor(
  * withdrawn.
  *
  * What settled it was watching the real failure. A genuine wedge on the
- * non-blocking fd, twice within three minutes: the daemon refused, a
+ * non-blocking fd, twice in about four minutes: the daemon refused, a
  * supervisor restarted it, it reopened the port, reported `panel online`, and
- * wedged again immediately. Reopening does not reset a board that has stopped
- * accepting data. The thing that does is a physical replug, and until one
- * happens every reconnect is a wasted cycle that ends here again.
+ * wedged again straight away.
+ *
+ * **Be careful what that shows, because the first version of this paragraph
+ * was not.** It concluded "reopening does not reset a board that has stopped
+ * accepting data", which is one explanation and not the only one. The other
+ * is that the reset fired exactly as `serial.ts` §BOOT_SETTLE_MS says it does,
+ * the board came up clean, and this host's traffic wedged it again within
+ * seconds. Two re-wedges cannot tell those apart, and the second is the one
+ * the rest of the tree predicts — four separate places assert that opening
+ * toggles DTR/RTS and reboots the chip, and nothing here outranks them.
+ *
+ * The decision survives either way, which is why it is safe to leave the
+ * question open: on both readings a reconnect on a timer ends up back here
+ * within seconds, having paid `serial.ts` §raw's `stty` against a port that
+ * can park it. What a replug adds over a reopen is unestablished; that it is
+ * what has actually recovered this panel every time is not.
  *
  * So this stays absorbing, for a reason that is now about the *device* rather
  * than about the host's threadpool. The cost is real and worth naming: after

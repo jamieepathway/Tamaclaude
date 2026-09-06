@@ -87,9 +87,16 @@ const REFRESH_MS = 5000;
  * than a person waiting for a daemon to come back. "Comfortably" rather than
  * "far": `docs/ARCHITECTURE.md` puts the link at 562.5 KB/s and a full-screen
  * prime at 110,080 bytes, which is 191ms — so this is 1.3x the worst
- * *legitimate* write, not orders above it. Real art compresses 37:1 to 148:1,
- * so nothing near that is sent today, and the number is right for the wrong
- * reason if you only think about steady-state frames.
+ * *legitimate* write, not orders above it. Real art compresses 24:1 to 203:1
+ * — `bouldering` to `permission-sign` in `docs/ARCHITECTURE.md` — for a worst
+ * measured frame of 3,008 bytes, so nothing near that is sent today, and the
+ * number is right for the wrong reason if you only think about steady-state
+ * frames.
+ *
+ * That bracket read "37:1 to 148:1" until 2026-09-06, which was true when it
+ * was written and drifted as animations landed: 37:1 is now the second-worst
+ * rather than the worst, and 148:1 was never in the table at all. The
+ * conclusion held throughout, which is exactly why nobody noticed.
  *
  * The frame is genuinely lost, not deferred — `close()` clears the refresh
  * interval before it calls this, so there is no next refresh for this
@@ -363,10 +370,22 @@ async function transmit(ctx: Ctx, rect: Rect, encoded: Encoded): Promise<void> {
       wedged(),
     ]);
     if (!wrote) {
-      // Not a lost frame — a lost *panel*. See `afterWedge`: the write cannot
-      // be taken back, so retrying costs a threadpool thread and an fd each
-      // time and cannot reset the board anyway. Refuse once, loudly, and let a
+      // Not a lost frame — a lost *panel*. Refuse once, loudly, and let a
       // person do the one thing that works.
+      //
+      // **The reason is no longer the one this comment gave for a day.** It
+      // said the write could not be taken back, so each retry cost a
+      // threadpool thread and an fd — and cited `afterWedge`, which by then
+      // had been rewritten to retract exactly that. `serial.ts`
+      // §WRITE_RETRY_MS made the fd non-blocking: nothing parks and a reopen
+      // is cheap. The citation survived the commit that falsified it and
+      // pointed, for a day, straight at its own refutation.
+      //
+      // What keeps this absorbing is about the board rather than the host.
+      // Reopening was watched not to bring a wedged panel back — see
+      // `afterWedge` for what that observation does and does not establish —
+      // and `serial.ts` §raw is the residual cost of trying: `stty` opens the
+      // device itself and parks on a wedged port.
       wedgedOut(ctx);
       return;
     }

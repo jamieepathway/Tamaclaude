@@ -206,6 +206,21 @@ function isAgain(error: unknown): boolean {
  * on a board that has stopped accepting data that queue cannot empty. Neither
  * half is bounded and neither is interruptible.
  *
+ * **It is not only inferred: three of these were watched parked at once.** A
+ * review objected that no probe records `stty` hanging, which is right about
+ * the probe transcripts — every one of them ran `stty` against a *healthy*
+ * port and every one logged `stty ok`. What is not in those files is the
+ * incident itself, where `ps` showed pids 2366, 2591 and 2900 sitting in state
+ * `U`, each of them `stty -f /dev/cu.usbmodem11401 raw -echo -crtscts`, each
+ * spawned by a daemon a supervisor had just restarted into the wedged port,
+ * and none of them ever reaped.
+ *
+ * The same review noted those daemons ran the blocking build, which is true —
+ * they predate `WRITE_RETRY_MS` by half an hour — and does not weaken the
+ * point. `stty` is a separate process running the system binary against the
+ * device node; what flags *this* file passes to `open` has no bearing on it.
+ * The hazard is a property of the port, and it outlived the fix.
+ *
  * That draft argued it was safe because "it can only park on a port some other
  * process wedged, and this package no longer wedges ports". The second clause
  * is true and the first does not follow from it: a Variant-B wedge starts at
