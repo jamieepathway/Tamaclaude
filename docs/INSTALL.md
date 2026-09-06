@@ -223,15 +223,29 @@ of seconds, as soon as the Mac has something to send.
 
 So check in this order:
 
-1. **Is the Mac asleep?** Wake it. The panel should light within a few seconds.
-2. **Is the daemon running?** `pnpm tamaclaude status`. If it is not, the
-   entries below cover why.
-3. **Only if the Mac is awake and `status` says it is running** is a dark panel
-   a fault — most likely the cable or the board itself. Unplug the panel from
-   its hub and plug it back in.
+1. **Run `pnpm tamaclaude status` first.** It is the only place that reports
+   quiet hours, and it names them if they are set:
 
-This changed on 6 Sep. Before then a panel whose host had stopped held its last
-picture indefinitely, which looked healthy and was not — the more confusing of
+   ```
+   quiet     23:00-07:00 — dark now unless you are working, until 07:00
+   ```
+
+   If you see that line and it is inside the window, the panel is dark because
+   you asked it to be. Touch anything in Claude Code and it lights within a
+   second or so. See "Quiet hours" below.
+
+2. **Is the Mac asleep?** Wake it. The panel should light within about ten
+   seconds — a still scene waits for the next full repaint, which is every five
+   seconds, on top of the USB reconnect.
+
+3. **Only if the Mac is awake, `status` says it is running, and there is no
+   quiet line in force** is a dark panel a fault — most likely the cable or the
+   board itself. Unplug the panel from its hub and plug it back in.
+
+This changed on 6 Sep, and only for a panel flashed on or after that date —
+`docs/HARDWARE.md` §"Which firmware is on the board" says which. Before then a
+panel whose host had stopped held its last picture indefinitely, which looked
+healthy and was not — the more confusing of
 the two failures, and the reason it now goes dark instead. Note the one case
 that is _not_ covered: a panel showing the boot splash stays lit however long
 it waits, because "nothing has ever driven this panel" is worth being able to
@@ -284,6 +298,40 @@ repair, say — the daemon refuses rather than guessing, because every ESP32 in
 this mode looks identical over USB and driving the wrong one would report
 itself working. `status` says `loaded but not running; last exit 2 — see the
 log`, and the log names both devices. Unplug one.
+
+## Quiet hours
+
+Off unless you set it. When set, the panel goes dark overnight instead of
+lighting an empty room — but **not while you are working**, because a window
+that blanked the panel mid-session would be worse than the lamp it replaces.
+
+Set it in the agent's own environment:
+
+```bash
+/usr/libexec/PlistBuddy -c \
+  "Add :EnvironmentVariables:TAMACLAUDE_QUIET string 23:00-07:00" \
+  ~/Library/LaunchAgents/com.tamaclaude.daemon.plist
+launchctl bootout "gui/$(id -u)/com.tamaclaude.daemon"
+launchctl bootstrap "gui/$(id -u)" \
+  ~/Library/LaunchAgents/com.tamaclaude.daemon.plist
+```
+
+`HH:MM-HH:MM`, 24-hour, and it may cross midnight. Anything it cannot read
+means off, so a typo leaves the panel behaving exactly as it did before rather
+than dark at some surprising hour.
+
+The reload matters: editing the file alone changes what is _configured_, not
+what the running daemon is doing. `status` reports the running job and will
+tell you when the two disagree.
+
+Once set it survives `install-agent --apply`, which rewrites the rest of that
+file. It did not always — before 6 Sep the documented repair silently deleted
+it.
+
+**What happens:** inside the window, five minutes after your last activity in
+Claude Code the daemon stops sending, and thirty seconds later the panel goes
+dark. Anything you do lights it again almost immediately. Outside the window
+nothing changes.
 
 If none of those, the log is at `~/.tamaclaude/daemon.log` — written only by
 the automatic startup from step 6, so it will not exist if you never got that

@@ -275,3 +275,36 @@ describe('describeInstallOutcome', () => {
     );
   });
 });
+
+describe('quiet hours survive a reinstall', () => {
+  const options = {
+    node: '/opt/node/bin/node',
+    script: '/opt/tamaclaude/dist/index.js',
+    pack: '/home/someone/.tamaclaude/pack',
+    socket: '/home/someone/.tamaclaude/daemon.sock',
+    log: '/home/someone/.tamaclaude/daemon.log',
+  };
+
+  it('carries a window into the plist when there is one', () => {
+    // The bug: `install-agent --apply` rewrites the plist whole, and
+    // `docs/INSTALL.md` tells people to run it whenever node moves. A window
+    // that only ever got there by hand was deleted by the documented repair,
+    // silently — no error, no log line, the panel just stops going dark.
+    const xml = agentPlist({ ...options, quiet: '23:00-07:00' });
+    expect(xml).toContain('<key>TAMACLAUDE_QUIET</key>');
+    expect(xml).toContain('<string>23:00-07:00</string>');
+  });
+
+  it('writes no key at all when there is none', () => {
+    // An empty string would parse as unreadable and mean "off", which is the
+    // same behaviour — but it would also make every plist claim a setting
+    // nobody chose, and `status` would have to special-case it.
+    expect(agentPlist(options)).not.toContain('TAMACLAUDE_QUIET');
+  });
+
+  it('escapes it like every other value', () => {
+    const xml = agentPlist({ ...options, quiet: '2<3' });
+    expect(xml).toContain('2&lt;3');
+    expect(xml).not.toContain('<string>2<3</string>');
+  });
+});

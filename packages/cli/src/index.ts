@@ -8,7 +8,13 @@
  * the CLI covers the rest. See BUILD_PLAN §Deliberately not scheduled.
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import process from 'node:process';
@@ -28,6 +34,7 @@ import { isBirthday } from '@tamaclaude/packs';
 import {
   AGENT_LABEL,
   agentCondition,
+  agentEnvironment,
   agentListing,
   agentPlist,
   agentPlistPath,
@@ -40,7 +47,7 @@ import { runDaemon } from './daemon.js';
 import { chooseDevice, refusalReport } from './device.js';
 import { capDaemonLog, daemonLogPath } from './log.js';
 import { describePack, resolvePack } from './pack.js';
-import { quietGate } from './quiet.js';
+import { quietGate, quietSpecIn } from './quiet.js';
 import { status } from './status.js';
 
 /**
@@ -130,6 +137,21 @@ async function installAgent(argv: readonly string[]): Promise<void> {
     pack: resolved.directory,
     socket: defaultSocketPath(),
     log: daemonLogPath(home),
+    /*
+     * Carried forward, not set here. This command rewrites the plist whole, so
+     * before it learned to read the existing window, `--apply` deleted quiet
+     * hours — silently, and on the command `docs/INSTALL.md` prescribes
+     * whenever node moves. There is no flag to set it because there is nowhere
+     * better for it to live than the job's own environment; what there has to
+     * be is a guarantee that reinstalling does not throw it away.
+     */
+    quiet: quietSpecIn({
+      running: agentEnvironment(),
+      plist: existsSync(plistPath)
+        ? readFileSync(plistPath, 'utf8')
+        : undefined,
+      env: process.env['TAMACLAUDE_QUIET'],
+    }),
   };
   process.stdout.write(
     describeAgentInstall(options, plistPath, existsSync(plistPath)),

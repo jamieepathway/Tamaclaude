@@ -18,7 +18,9 @@
  * was made in the package that owns it. What lives here is the glue that has no
  * other home: turning a `Resolution` into a `Scene`, and turning consecutive
  * framebuffers into the smallest rectangle that changed.
- */ import type {
+ */
+
+import type {
   AnimationName,
   createRegistry,
   Session,

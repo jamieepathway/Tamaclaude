@@ -13,6 +13,7 @@ import { homedir } from 'node:os';
 import process from 'node:process';
 
 import {
+  agentEnvironment,
   agentListing,
   agentPlistPath,
   describeAgentStatus,
@@ -20,7 +21,7 @@ import {
 } from './agent.js';
 import { daemonLogPath } from './log.js';
 import { describePack, resolvePack } from './pack.js';
-import { quietSpecIn, quietStatusLine } from './quiet.js';
+import { quietStatusLine } from './quiet.js';
 
 /**
  * The pack line, including when there is no pack.
@@ -66,10 +67,12 @@ export function status(): void {
   process.stdout.write(`pack      ${packStatus()}\n`);
   process.stdout.write(
     quietStatusLine(
-      quietSpecIn(
-        readIfPresent(agentPlistPath(homedir())),
-        process.env['TAMACLAUDE_QUIET'],
-      ),
+      {
+        running: agentEnvironment(),
+        plist: readIfPresent(agentPlistPath(homedir())),
+        env: process.env['TAMACLAUDE_QUIET'],
+      },
+      Date.now(),
     ),
   );
   process.stdout.write(`log       ${daemonLogPath(homedir())}\n`);

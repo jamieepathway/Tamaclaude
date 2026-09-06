@@ -210,18 +210,29 @@
  *     `afterRefresh` on that interval.
  *   - `packages/device/src/link.ts` §afterRefresh marks `needsPrime`. It marks
  *     a debt; it writes nothing.
- *   - `packages/cli/src/daemon.ts:716` is what pays it — `status.needsPrime ?
- *     whole : changed(...)` — inside §painting, which re-arms every `FRAME_MS`
- *     (125ms) for the life of the process.
+ *   - `packages/cli/src/daemon.ts` §paintOnce is what pays it —
+ *     `status.needsPrime ? whole : changed(...)` — driven by `loop.ts`
+ *     §painting, which re-arms every `FRAME_MS` (125ms) for the life of the
+ *     process.
+ *
+ * Cited by section, not by line. The first version of this block cited
+ * `daemon.ts:716` and `daemon.ts:657`; both drifted inside the same branch,
+ * and one was off by one when written. A comment in the file that costs a
+ * reflash to correct must not depend on line numbers in a file anybody may
+ * reformat.
  *
  * A sleeping crab is therefore repainted in full twelve times a minute.
  * Silence on this link does not mean a still picture; it means nothing is
  * driving the panel at all.
  *
- * Precisely: silence *while online*. `daemon.ts:657` returns early when the
- * phase is not `online`, which is correct — a host that is not online is not
- * driving anything — but it is why this is stated as a chain rather than a
- * guarantee. `packages/device/src/panel.test.ts` gates the arithmetic so a
+ * Precisely: silence *while online*, and only from the daemon. `daemon.ts`
+ * §paintOnce returns early when the phase is not `online` — a host that is not
+ * online is not driving anything — which is why this is a chain rather than a
+ * guarantee. Two things sit outside it deliberately: `TAMACLAUDE_QUIET` makes
+ * a healthy daemon silent overnight, and one-shot painters such as
+ * `tools/colour-bars.ts` paint and exit, so their picture now lasts thirty
+ * seconds. Both are the old "would wipe a legitimately still frame" objection
+ * being right about something other than the daemon. `packages/device/src/panel.test.ts` gates the arithmetic so a
  * change to `REFRESH_MS` cannot silently blank a live panel.
  *
  * Thirty seconds is six times the interval that has to lapse, so it takes six
@@ -773,9 +784,15 @@ void app_main(void) {
    *
    * So there are now three states, not two. The splash means nothing has ever
    * driven this panel — `idle_check` will not blank it, so that reading is
-   * intact. Lit means a host is talking. Dark means one was and has stopped:
-   * asleep, quit, crashed, or unplugged. **"A dark panel means a fault" is no
-   * longer true**, and `docs/INSTALL.md` carries the version a person needs.
+   * intact. Lit means a host is talking. Dark means one was and has stopped —
+   * asleep, quit, crashed, unplugged, **or deliberately quiet**: the host
+   * gained a `TAMACLAUDE_QUIET` window after this firmware shipped, so a
+   * healthy, connected daemon chooses silence overnight. From here those are
+   * one state and cannot be told apart, which is right — this file has no
+   * business knowing why the bytes stopped.
+   *
+   * **"A dark panel means a fault" is no longer true**, and `docs/INSTALL.md`
+   * carries the version a person needs, the quiet case included.
    */
   for (;;) {
     rect_header_t header;

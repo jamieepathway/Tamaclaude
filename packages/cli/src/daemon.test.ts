@@ -117,7 +117,13 @@ describe('the daemon command', () => {
 
   async function start(
     serial: SerialSystem,
-    extra: { readonly refreshMs?: number } = {},
+    extra: {
+      readonly refreshMs?: number;
+      readonly quiet?: (
+        now: number,
+        lastEventAt: number | undefined,
+      ) => boolean;
+    } = {},
   ) {
     const directory = mkdtempSync(join(tmpdir(), 'tc-daemon-'));
     directories.push(directory);
@@ -233,6 +239,56 @@ describe('the daemon command', () => {
     await daemon.stop();
     running.splice(0);
     await expect(send(socketPath, '{}\n')).rejects.toThrow();
+  });
+
+  describe('quiet hours, through the daemon rather than the predicate', () => {
+    /*
+     * `quiet.ts` is tested against fixed clocks, and that covers the decision.
+     * What had no test at all was the wiring — the option, the guard in the
+     * paint closure, and the frame carried forward. Both failure modes are
+     * invisible to every other gate in the repo: "dark all day" and "lit all
+     * night" each look like a daemon working perfectly from the outside.
+     */
+    it('sends nothing at all while quiet', async () => {
+      const serial = fakeSerial();
+      await start(serial.system, { quiet: () => true });
+      await delay(60);
+      expect(serial.state.written).toHaveLength(0);
+    });
+
+    it('sends again the moment it is not', async () => {
+      // Same daemon, same panel, one flag. A test that only proved the quiet
+      // case would pass against a daemon that never painted at all.
+      const serial = fakeSerial();
+      let quiet = true;
+      await start(serial.system, { quiet: () => quiet });
+      await delay(60);
+      expect(serial.state.written).toHaveLength(0);
+
+      quiet = false;
+      await delay(60);
+      expect(serial.state.written.length).toBeGreaterThan(0);
+    });
+
+    it('is given the clock and the registry, not left to ask for them', async () => {
+      // The activity override is the whole reason this is a predicate rather
+      // than a window: somebody working at one in the morning keeps their panel.
+      // That only works if the daemon hands over a *live* `lastEventAt`.
+      const serial = fakeSerial();
+      const seen: (number | undefined)[] = [];
+      await start(serial.system, {
+        quiet: (now, lastEventAt) => {
+          seen.push(lastEventAt);
+          expect(now).toBe(NOW);
+          return true;
+        },
+      });
+      await delay(60);
+      expect(seen.length).toBeGreaterThan(0);
+      // Never `undefined`: `registry.ts` seeds `lastEventAt` at boot, which is
+      // why `quiet.ts` §isQuiet documents that branch as unreachable from here.
+      expect(seen.every((at) => typeof at === 'number')).toBe(true);
+    });
   });
 });
 

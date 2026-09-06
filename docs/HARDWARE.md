@@ -136,7 +136,16 @@ with `tools/colour-bars.ts`, which paints six known values across the panel.
 That tool exists because a wrong byte order and a wrong invert and a wrong
 element order all look like "the colours are off", and each maps that set of
 six somewhere distinguishable — so one look identifies which is in play. Reach
-for it before theorising. Photographs are not evidence here: a warm-lit room
+for it before theorising.
+
+**Since 6 Sep the bars only last thirty seconds.** `colour-bars.ts` paints,
+holds the port briefly and exits, and `IDLE_BLANK_MS` reads a host that has
+stopped talking as a host that has gone — which is exactly right for the
+daemon and a nuisance for a one-shot painter. `tools/blit.ts` has the same
+shape once its animation ends. Look at the glass promptly, or re-run the tool;
+the panel is not faulty and nothing was lost. This is the one case the retired
+"an idle timeout would wipe a legitimately still frame" argument was right
+about, and it survives because these tools are not the daemon. Photographs are not evidence here: a warm-lit room
 makes a camera white-balance a neutral panel to blue, which cost an evening of
 chasing a colour bug that did not exist.
 
@@ -249,25 +258,67 @@ both disappeared by then. What worked, start to finish in about twenty minutes:
 git clone -b v5.3.2 --depth 1 --recursive --shallow-submodules \
   https://github.com/espressif/esp-idf.git ~/esp/esp-idf
 ~/esp/esp-idf/install.sh esp32c6
-brew install cmake ninja          # the step nothing tells you about
+brew install cmake ninja          # a prerequisite, not part of install.sh
 . ~/esp/esp-idf/export.sh
 cd packages/device/firmware/blitter && idf.py set-target esp32c6 && idf.py build
 ```
 
-Two things that cost time and are not in Espressif's instructions. **`cmake` and
-`ninja` are not installed by `install.sh` on macOS** — it installs the RISC-V
-toolchain and expects those from Homebrew, and the failure is a bare "cmake must
-be available on the PATH". And **`set-target` must run after cmake exists**: a
+Two things that cost time. **`cmake` and `ninja` are not installed by
+`install.sh` on macOS** — `tools.json` marks both `on_request` except on
+Windows, so it installs the RISC-V toolchain and expects these from Homebrew,
+and the failure is a bare "cmake must be available on the PATH". Espressif's
+own Linux/macOS setup page _does_ list `brew install cmake ninja dfu-util` as a
+prerequisite; an earlier version of this paragraph said it did not, which is
+worse than useless because it invites skipping the prerequisites. The lesson is
+"`install.sh` is not the prerequisites step", not "the vendor omits it". And **`set-target` must run after cmake exists**: a
 `set-target` that failed for want of cmake leaves a build directory configured
 for the default Xtensa target, and the next build asks for
 `xtensa-esp32-elf-gcc` on a RISC-V part. `rm -rf build sdkconfig` and redo it.
 
-So the four fixes above were symptoms of an install that had rotted in place,
-not of this toolchain. A fresh one skips them. Keep the list for the next
-rotted install; do not start from it.
+So the four fixes above did not recur. **The tempting conclusion — that they
+were symptoms of a rotted install — is not what the evidence shows**, because
+fix 2 blames `install.sh` itself ("the installer pulls 0.19, whose API it does
+not accept"), and a fresh `install.sh` should have reproduced that. What
+actually differed is in a directory name: the rotted environment was
+`idf5.3_py3.9_env`, the fresh one is `idf5.3_py3.14_env`. Different Python,
+different wheel resolution, a different `ruamel.yaml.clib` story.
 
-Then `idf.py fullclean` before building: a build directory left from an earlier
-Python refuses to configure against a new one, and says so clearly.
+So the usable rule is about Python, not about freshness: on 3.14 none of the
+four bit; on 3.9 expect all of them. Check `ls ~/.espressif/python_env` before
+deciding which half of this section applies to you. One run each way is thin
+evidence for a mechanism, and it is stated as a lead rather than a finding.
+
+That numbered list is the _rotted_ path. On it, `idf.py fullclean` before
+building: a build directory left from an earlier Python refuses to configure
+against a new one, and says so clearly. The fresh recipe above has no build
+directory to clean — its equivalent trap is the `set-target` ordering, which is
+already named there.
+
+## Which firmware is on the board
+
+Kept here because nothing else can hold it: the binary is not in the repo, and
+the board cannot be asked what it will do, only what it was built from.
+
+| Flashed    | Built from | Board                            | What changed                                  |
+| ---------- | ---------- | -------------------------------- | --------------------------------------------- |
+| 2 Sep 2026 | `46ea9e2`  | the one now on the author's desk | Real splash art                               |
+| 6 Sep 2026 | `5db74eb`  | same board                       | `IDLE_BLANK_MS` — blanks after 30s of silence |
+
+The hash is the commit whose _behaviour_ is on the board. Later commits have
+touched `main.c` for comments only, so a diff against the working tree will
+show changes the board does not have and does not need — check the code, not
+the prose, before concluding a reflash is due.
+
+Read the app header back off the board to check, rather than trusting this
+table — `esptool.py read_flash` at the app offset, or the version line the
+build prints. A table in a doc is a claim; the header is the measurement, and
+this row exists because the 2 Sep row was verified that way and the habit is
+worth keeping.
+
+**Anything reading this table should assume a panel might be on the older
+build.** `docs/INSTALL.md` describes the thirty-second blank as though every
+panel does it; a board still on `46ea9e2` holds its last frame for ever
+instead.
 
 ## Spares
 

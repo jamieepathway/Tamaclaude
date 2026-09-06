@@ -165,8 +165,8 @@ whether anything is running. This is the only asset stored on the device.
 
 That sentence used to end "and the obvious proxy for it would wipe a
 legitimately still frame", which stopped being true on 6 Sep. The proxy is a
-timeout on _silence_, and this host is never silent while online — `panel.ts`
-§REFRESH_MS owes a whole frame every five seconds and `daemon.ts` §painting
+timeout on _silence_, and the _daemon_ is never silent while online — `panel.ts`
+§REFRESH_MS owes a whole frame every five seconds and `daemon.ts` §paintOnce
 pays it. So the panel now blanks after thirty seconds without a packet, and the
 splash is exempt from it. `packages/device/src/panel.test.ts` gates the two
 constants against each other, because they live in different languages.

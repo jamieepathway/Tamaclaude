@@ -69,9 +69,8 @@ describe('deciding whether to go quiet', () => {
   });
 
   it('wakes for somebody still working, which is the whole point', () => {
-    // Measured against the person, not the clock: this project was being
-    // worked on at 01:40, and a window that blanked the panel mid-session
-    // would be a worse bug than the lamp it replaced.
+    // Measured against the person, not the clock. A window that blanked the
+    // panel mid-session would be a worse bug than the lamp it replaced.
     expect(isQuiet(night, at(1, 40), at(1, 40) - 1000)).toBe(false);
   });
 
@@ -128,28 +127,48 @@ describe('finding the window the daemon is actually using', () => {
   </dict>
 </dict></plist>`;
 
-  it('reads it out of the plist, because that is the daemon environment', () => {
-    // The bug this exists for: `status` first read its own `process.env`, and
-    // the variable lives in the launchd plist. It reported nothing while the
-    // daemon was observing the window perfectly — the one case the line was
-    // added to explain.
-    expect(quietSpecIn(plist, undefined)).toBe('23:00-07:00');
+  const running = `\tenvironment = {
+\t\tTAMACLAUDE_SOCKET => /Users/someone/.tamaclaude/daemon.sock
+\t\tTAMACLAUDE_PACK => /Users/someone/.tamaclaude/pack
+\t\tTAMACLAUDE_QUIET => 22:00-08:00
+\t}`;
+
+  it('prefers the running job over the file on disk', () => {
+    // These disagree exactly when somebody edited the plist and did not
+    // reload, which — before `install-agent` learned to carry the window — was
+    // the only way to set it at all. Reporting the file would describe a
+    // window the daemon has never heard of.
+    expect(quietSpecIn({ running, plist })).toBe('22:00-08:00');
   });
 
-  it('does not confuse it with the pack sitting next to it', () => {
-    expect(quietSpecIn(plist, undefined)).not.toContain('pack');
+  it('falls back to the file when the job is not loaded', () => {
+    expect(quietSpecIn({ plist })).toBe('23:00-07:00');
   });
 
   it('falls back to the environment for a daemon run by hand', () => {
-    expect(quietSpecIn(undefined, '09:00-17:00')).toBe('09:00-17:00');
+    expect(quietSpecIn({ env: '09:00-17:00' })).toBe('09:00-17:00');
   });
 
-  it('prefers the plist, which is what the running daemon was given', () => {
-    expect(quietSpecIn(plist, '09:00-17:00')).toBe('23:00-07:00');
+  it('does not confuse it with the pack sitting next to it', () => {
+    expect(quietSpecIn({ plist })).not.toContain('pack');
+    expect(quietSpecIn({ running })).not.toContain('daemon.sock');
   });
 
-  it('is nothing when neither has it', () => {
-    expect(quietSpecIn(undefined, undefined)).toBeUndefined();
-    expect(quietSpecIn('<plist><dict/></plist>', undefined)).toBeUndefined();
+  it('is nothing when no source has it', () => {
+    expect(quietSpecIn({})).toBeUndefined();
+    expect(quietSpecIn({ plist: '<plist><dict/></plist>' })).toBeUndefined();
+  });
+
+  it('says so when the file and the running job disagree', () => {
+    // The whole point of preferring the running job is that a person can be
+    // looking at a lit panel while the plist promises darkness. Saying which
+    // is in force, and that a reload would close the gap, is cheaper than
+    // letting them work it out.
+    const line = describeQuietHours(
+      parseQuietHours(quietSpecIn({ running, plist })),
+      at(23, 30),
+      { stale: true },
+    );
+    expect(line).toMatch(/reload|install-agent/i);
   });
 });
