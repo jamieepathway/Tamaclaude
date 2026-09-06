@@ -5,9 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   afterClose,
   afterOpen,
-  afterReplug,
   afterReport,
-  afterWedge,
   afterWrite,
   newLink,
   statusOf,
@@ -130,39 +128,5 @@ describe('hearing from the device', () => {
     );
     expect(afterOpen(afterClose(refused)).phase).toBe('refused');
     expect(afterReport(refused, report()).phase).toBe('refused');
-  });
-});
-
-describe('taking back a refusal', () => {
-  it('clears a wedge, because unplugging the panel is what fixes one', () => {
-    const wedged = afterWedge(settled());
-    expect(statusOf(wedged).phase).toBe('refused');
-
-    const back = afterReplug(wedged);
-    expect(statusOf(back).phase).toBe('offline');
-    expect(statusOf(back).refusal).toBeUndefined();
-    // The board has been power-cycled; it is showing its splash and nothing
-    // this host believes about its pixels is true any more.
-    expect(statusOf(back).needsPrime).toBe(true);
-  });
-
-  it('leaves a firmware refusal exactly where it is', () => {
-    // The distinction this whole flag exists for. A mismatch is about what is
-    // flashed, so the board that comes back after a replug is running the same
-    // wrong firmware, and clearing the refusal would restart the re-priming
-    // into the void that it exists to end.
-    //
-    // Tested here rather than only through the transport: a mutant that drops
-    // `afterReplug`'s guard survives the transport-level test, because
-    // `watchForReplug` never starts polling for a refusal it did not cause and
-    // so never calls this at all. That makes the guard defence in depth, and
-    // defence in depth still has to be shown to work.
-    const mismatched = afterReport(
-      settled(),
-      report({ width: 172, height: 320, orientation: 'portrait' }),
-    );
-    expect(statusOf(mismatched).phase).toBe('refused');
-
-    expect(afterReplug(mismatched)).toEqual(mismatched);
   });
 });

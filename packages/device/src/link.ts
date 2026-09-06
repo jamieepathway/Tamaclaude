@@ -53,16 +53,6 @@ export type LinkStatus = {
 };
 
 export type LinkState = LinkStatus & {
-  /**
-   * Is this refusal the kind a physical replug fixes?
-   *
-   * `refused` carries two unrelated things. A wedge is about the board's
-   * *state*, and unplugging it clears that. A firmware/panel mismatch is about
-   * what is *flashed*, and the next open finds exactly the same one. Only the
-   * first may ever be cleared by `afterReplug`, and conflating them would turn
-   * the mismatch refusal back into the re-priming loop it exists to end.
-   */
-  readonly wedged: boolean;
   readonly counters: Counters;
   /** The tail of a status line that arrived split across two reads. */
   readonly pending: string;
@@ -74,7 +64,6 @@ export type LinkState = LinkStatus & {
 export function newLink(panel: PanelSize): LinkState {
   return {
     phase: 'offline',
-    wedged: false,
     // Nothing has ever been drawn, so everything is unaccounted for.
     needsPrime: true,
     counters: NO_COUNTERS,
@@ -184,36 +173,12 @@ export function afterWedge(state: LinkState): LinkState {
   return {
     ...state,
     phase: 'refused',
-    wedged: true,
     needsPrime: true,
     refusal:
       'the panel stopped accepting data — unplug it from the hub, plug it ' +
       'back in, and restart the daemon. Retrying in software does not help: ' +
       'reopening the port does not reset a board in this state, which was ' +
       'measured rather than assumed.',
-  };
-}
-
-/**
- * A new panel is on the end of the cable: take back a wedge refusal.
- *
- * The narrow counterpart to `afterWedge`, and narrow on purpose. It clears
- * only a refusal that `wedged` marked, so a firmware/panel mismatch survives a
- * replug exactly as it survives everything else — the board that comes back is
- * running the same firmware that was wrong before.
- *
- * `needsPrime` because the device on the other end is, as far as this host is
- * concerned, a stranger: it has been power-cycled, it is showing its boot
- * splash, and nothing this host believes about its pixels is true any more.
- */
-export function afterReplug(state: LinkState): LinkState {
-  if (!state.wedged) return state;
-  return {
-    ...state,
-    phase: 'offline',
-    wedged: false,
-    needsPrime: true,
-    refusal: undefined,
   };
 }
 

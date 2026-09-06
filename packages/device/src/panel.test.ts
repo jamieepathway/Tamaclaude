@@ -54,8 +54,6 @@ function fakeSerial(chunk = Number.MAX_SAFE_INTEGER) {
     written: [] as number[],
     watch: undefined as SerialWatch | undefined,
     wedged: false,
-    /** Stands in for the device node's identity. A replug changes it. */
-    instance: 1,
   };
   const port: SerialPort = {
     write: async (bytes) => {
@@ -78,8 +76,6 @@ function fakeSerial(chunk = Number.MAX_SAFE_INTEGER) {
     },
   };
   const system: SerialSystem = {
-    instanceOf: async (_path) =>
-      state.present ? `fake:${state.instance}` : undefined,
     open: async (_path, watch) => {
       await delay(0);
       if (!state.present) throw new Error('ENOENT: no such file or directory');
@@ -112,16 +108,6 @@ function fakeSerial(chunk = Number.MAX_SAFE_INTEGER) {
     },
     plug: () => {
       state.present = true;
-    },
-    /**
-     * A physical replug: the board is power-cycled and the device node is
-     * recreated, so its identity changes. That change is the only signal the
-     * host gets that somebody has done the one thing which fixes a wedge.
-     */
-    replug: () => {
-      state.present = true;
-      state.wedged = false;
-      state.instance += 1;
     },
   };
 }
@@ -227,7 +213,6 @@ describe('giving up on a path that is not coming back', () => {
     let attempts = 0;
     let gaveUpAt = 0;
     const counting: SerialSystem = {
-      instanceOf: async (path) => fake.system.instanceOf(path),
       open: async (path, watch) => {
         attempts += 1;
         fake.state.present = attempts === 4;
@@ -600,81 +585,6 @@ describe('a panel that wedges mid-write', () => {
     serial.plug();
     await delay(200);
     expect(serial.state.opens).toBe(opens);
-  }, 10_000);
-});
-
-describe('a wedged panel that is physically replugged', () => {
-  it('comes back on its own once the device instance changes', async () => {
-    // The gap this closes was watched on 2026-09-06: a genuine wedge, then a
-    // replug that brought the board back healthy at 01:40, and a daemon that
-    // never noticed because `afterWedge` is absorbing. The panel stayed dark
-    // until it was restarted by hand.
-    //
-    // A replug is observable without touching the port: the device node is
-    // recreated, so its identity changes. `serial.ts` §instanceOf reads that
-    // with `stat`, which does not open the device and therefore cannot park on
-    // a wedged one — the hazard that makes reconnecting-on-a-timer unsafe.
-    const serial = fakeSerial();
-    const panel = open({ serial: serial.system, retryMs: 5 });
-    await settle();
-    serial.say(HEALTHY);
-    await settle();
-
-    serial.wedge();
-    void panel.send(WHOLE, payload(1, 4));
-    await delay(1_100);
-    expect(panel.status().phase).toBe('refused');
-
-    serial.replug();
-    await delay(200);
-
-    expect(panel.status().phase).toBe('online');
-    expect(panel.status().refusal).toBeUndefined();
-    // Whatever the old board had is gone; the new one owes a whole frame.
-    expect(panel.status().needsPrime).toBe(true);
-  }, 10_000);
-
-  it('does not reopen while the same instance is still there', async () => {
-    // The other half, and the one that matters for the host. Reopening a port
-    // that is still wedged runs `stty` against it, and `stty` opens the device
-    // itself — measured to park uninterruptibly, which is how three restarts
-    // produced three processes macOS could never kill. Waiting for the
-    // instance to change is what makes the retry safe rather than merely slow.
-    const serial = fakeSerial();
-    const panel = open({ serial: serial.system, retryMs: 5 });
-    await settle();
-    serial.say(HEALTHY);
-    await settle();
-
-    serial.wedge();
-    void panel.send(WHOLE, payload(1, 4));
-    await delay(1_100);
-    const opens = serial.state.opens;
-
-    // The board stops misbehaving, but nobody touches the cable.
-    serial.unwedge();
-    await delay(300);
-
-    expect(serial.state.opens).toBe(opens);
-    expect(panel.status().phase).toBe('refused');
-  }, 10_000);
-
-  it('does not resurrect a firmware refusal, which no replug can fix', async () => {
-    // `refused` carries two very different things. A wedge is about the board's
-    // state and a replug fixes it. A firmware/panel mismatch is about what is
-    // flashed, and the next open finds exactly the same one — re-priming into
-    // the void is what that refusal exists to end.
-    const serial = fakeSerial();
-    const panel = open({ serial: serial.system, retryMs: 5 });
-    await settle();
-    serial.say(PORTRAIT);
-    await settle();
-    expect(panel.status().phase).toBe('refused');
-
-    serial.replug();
-    await delay(200);
-
-    expect(panel.status().phase).toBe('refused');
   }, 10_000);
 });
 
