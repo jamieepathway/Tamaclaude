@@ -203,12 +203,26 @@
  * grounds that "the closest proxy, an idle timeout, would wipe the screen
  * during any long still frame. A crab asleep is a legitimate picture." The
  * objection was right about what would break it and wrong that it applies:
- * there is no long still frame on this wire. `packages/device/src/link.ts`
- * §afterRefresh marks a whole frame owed every `REFRESH_MS` — 5,000ms — and
- * `packages/cli/src/daemon.ts` §painting re-arms itself every `FRAME_MS`
- * (125ms) for the life of the process. A sleeping crab is repainted in full
- * twelve times a minute. Silence on this link does not mean a still picture;
- * it means nothing is driving the panel at all.
+ * there is no long still frame on this wire. Three links, and the first draft
+ * of this comment named the wrong file for one of them:
+ *
+ *   - `packages/device/src/panel.ts:52` sets `REFRESH_MS = 5000` and fires
+ *     `afterRefresh` on that interval.
+ *   - `packages/device/src/link.ts` §afterRefresh marks `needsPrime`. It marks
+ *     a debt; it writes nothing.
+ *   - `packages/cli/src/daemon.ts:716` is what pays it — `status.needsPrime ?
+ *     whole : changed(...)` — inside §painting, which re-arms every `FRAME_MS`
+ *     (125ms) for the life of the process.
+ *
+ * A sleeping crab is therefore repainted in full twelve times a minute.
+ * Silence on this link does not mean a still picture; it means nothing is
+ * driving the panel at all.
+ *
+ * Precisely: silence *while online*. `daemon.ts:657` returns early when the
+ * phase is not `online`, which is correct — a host that is not online is not
+ * driving anything — but it is why this is stated as a chain rather than a
+ * guarantee. `packages/device/src/panel.test.ts` gates the arithmetic so a
+ * change to `REFRESH_MS` cannot silently blank a live panel.
  *
  * Thirty seconds is six times the interval that has to lapse, so it takes six
  * consecutive missed refreshes to blank. `await_header` already wakes every
@@ -334,6 +348,11 @@ static void panel_start(void) {
       .intr_type = GPIO_INTR_DISABLE,
   };
   ESP_ERROR_CHECK(gpio_config(&backlight));
+  /* Not `backlight_set(false)`. That helper is idempotent against
+   * `backlight_lit`, which is already false here, so it would return without
+   * ever driving the pin — and the whole point of this line is to drive it
+   * explicitly before the SPI bring-up. The tidy-up is tempting and would pass
+   * on the bench, because the output register happens to reset to 0. */
   ESP_ERROR_CHECK(gpio_set_level(PIN_BL, 0));
 
   spi_bus_config_t bus = {
@@ -741,10 +760,22 @@ void app_main(void) {
    * The splash stays up until the host paints over it, and it is never
    * redrawn. "No host connected" is not observable on this link — the USB
    * peripheral sees a Mac that has enumerated the device the same whether the
-   * daemon is running or not — and the closest proxy, an idle timeout, would
-   * wipe the screen during any long still frame. A crab asleep is a legitimate
-   * picture. So the rule is the narrow one: the splash means nothing has ever
-   * driven this panel, and a dark panel still means a fault.
+   * daemon is running or not. That part still holds: `usb_serial_jtag_is_
+   * connected()` exists but reports SOF packets, so it sees the cable and not
+   * the program.
+   *
+   * **The second half of this paragraph was wrong and is now `IDLE_BLANK_MS`.**
+   * It said the closest proxy, an idle timeout, "would wipe the screen during
+   * any long still frame. A crab asleep is a legitimate picture." True of a
+   * host that goes quiet when the picture stops changing, and this host does
+   * not: it repaints in full every five seconds by design. Silence here means
+   * nothing is driving the panel, never that the picture is still.
+   *
+   * So there are now three states, not two. The splash means nothing has ever
+   * driven this panel — `idle_check` will not blank it, so that reading is
+   * intact. Lit means a host is talking. Dark means one was and has stopped:
+   * asleep, quit, crashed, or unplugged. **"A dark panel means a fault" is no
+   * longer true**, and `docs/INSTALL.md` carries the version a person needs.
    */
   for (;;) {
     rect_header_t header;

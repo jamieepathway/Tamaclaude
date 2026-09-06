@@ -212,7 +212,30 @@ pnpm tamaclaude status
 ```
 
 It asks the system whether the program is genuinely running, rather than
-assuming. Three things account for almost everything.
+assuming. A handful of things account for almost everything, and the first one
+below is usually not a fault at all.
+
+**The panel is completely dark — no picture, no glow.** Most often this is
+working as intended. The panel turns its backlight off after **thirty seconds**
+with nothing arriving from the Mac, so a dark panel usually means the Mac is
+asleep, or the daemon is not running. It comes back on its own, within a couple
+of seconds, as soon as the Mac has something to send.
+
+So check in this order:
+
+1. **Is the Mac asleep?** Wake it. The panel should light within a few seconds.
+2. **Is the daemon running?** `pnpm tamaclaude status`. If it is not, the
+   entries below cover why.
+3. **Only if the Mac is awake and `status` says it is running** is a dark panel
+   a fault — most likely the cable or the board itself. Unplug the panel from
+   its hub and plug it back in.
+
+This changed on 6 Sep. Before then a panel whose host had stopped held its last
+picture indefinitely, which looked healthy and was not — the more confusing of
+the two failures, and the reason it now goes dark instead. Note the one case
+that is _not_ covered: a panel showing the boot splash stays lit however long
+it waits, because "nothing has ever driven this panel" is worth being able to
+see.
 
 **Clawd stopped reacting, but the panel is still on.** The Claude Code wiring
 also stores the full path to Node, and it is deliberately silent when that path

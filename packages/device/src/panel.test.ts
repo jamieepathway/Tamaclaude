@@ -11,6 +11,9 @@ import type { LinkStatus, PanelSize, Transport } from './index.js';
 import type { SerialPort, SerialSystem, SerialWatch } from './serial.js';
 import type { Encoded, Rect } from '@tamaclaude/protocol';
 
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
@@ -613,5 +616,58 @@ describe('shutting down a wedged panel', () => {
     // the invocation, not the release — a real port whose own `close()` hangs
     // would satisfy it too.
     expect(serial.state.closes).toBe(1);
+  });
+});
+
+describe('the firmware idle blank and this package agree', () => {
+  /*
+   * A 30-second constant in C depends on a 5-second constant in TypeScript,
+   * across a package boundary and a language barrier, with the daemon in a
+   * third package as the link that actually writes the bytes. Nothing enforced
+   * that, and a review pointed out what it costs: raise `REFRESH_MS` past the
+   * firmware's timeout and a live panel goes dark under a running daemon — on
+   * a board that has to be physically reflashed to take it back.
+   *
+   * Read out of both real files rather than duplicated here. A copy of the
+   * firmware value in this test would be a third place to drift, and the two
+   * that matter are the two that ship.
+   */
+  const root = fileURLToPath(new URL('../../..', import.meta.url));
+  const read = (file: string): string =>
+    readFileSync(`${root}/${file}`, 'utf8');
+
+  function constantIn(text: string, pattern: RegExp): number {
+    const found = pattern.exec(text);
+    expect(found, `could not find ${String(pattern)}`).not.toBeNull();
+    return Number(found?.[1]);
+  }
+
+  it('leaves at least six refreshes of margin before the panel blanks', () => {
+    const refreshMs = constantIn(
+      read('packages/device/src/panel.ts'),
+      /^const REFRESH_MS = (\d+);$/m,
+    );
+    const idleBlankMs = constantIn(
+      read('packages/device/firmware/blitter/main/main.c'),
+      /^#define IDLE_BLANK_MS (\d+)$/m,
+    );
+
+    // Six, not one: a single missed refresh is a scheduling hiccup on the Mac,
+    // and blanking the panel for one of those would be worse than the bug this
+    // replaced. Six consecutive misses is a host that has stopped.
+    expect(refreshMs).toBeGreaterThan(0);
+    expect(idleBlankMs).toBeGreaterThanOrEqual(refreshMs * 6);
+  });
+
+  it('still reads both constants, so the gate cannot pass by finding nothing', () => {
+    // `docs/CONVENTIONS.md` §"Verify a gate can fail": a regex that stops
+    // matching would make the assertion above vacuous rather than red, and the
+    // firmware file is the one most likely to be moved or renamed.
+    expect(read('packages/device/src/panel.ts')).toMatch(
+      /^const REFRESH_MS = /m,
+    );
+    expect(read('packages/device/firmware/blitter/main/main.c')).toMatch(
+      /^#define IDLE_BLANK_MS /m,
+    );
   });
 });

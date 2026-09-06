@@ -80,13 +80,23 @@ Two of them:
 
 - `throughput/` — 83 lines that read USB-CDC and discard, written to measure
   the link and nothing else (`docs/ARCHITECTURE.md` §Why it fits down the wire).
-- `blitter/` — the real one. It does exactly three things:
+- `blitter/` — the real one. It does exactly four things:
   1. Read framed commands from USB-CDC
   2. Decode RLE RGB565 and blit the rectangle to SPI
   3. Show an embedded splash when nothing has ever driven the panel
+  4. Drop the backlight after `IDLE_BLANK_MS` of silence, and raise it on the
+     next blitted rect
+
+"Three" until 6 Sep, when the fourth landed. The rule below is why the count is
+worth keeping honest: each addition is a thing that cannot be changed without
+physical access to the board.
 
 It is flashed once. If a change to it seems necessary, that is a strong signal
-the change belongs on the host instead.
+the change belongs on the host instead — and the idle blank was weighed against
+that test rather than waved past it. The host half (stop sending) is easy; the
+half only firmware can do is the backlight GPIO, which no protocol message
+reaches, so a host that crashes rather than exits cleanly cannot darken the
+panel by itself.
 
 **We did not need Waveshare's demo after all.** This section used to insist on
 starting from it, so as not to re-derive the ST7789 init sequence by hand — the
@@ -231,10 +241,30 @@ RISC-V toolchain were both already installed. In order:
    to read. Fixed by copying the dist-info to the dotted name and setting
    `Name:` in its METADATA to match.
 
-**That fourth fix is still in place and should stay.** It lives in
-`~/.espressif/python_env/idf5.3_py3.9_env/lib/python3.9/site-packages/` and
-removing it breaks the build again. It is a local environment fix, not
-something this repo can carry.
+**That fourth fix is gone, along with the rest of the install, and a rebuild
+from nothing on 6 Sep needed none of the four.** `~/esp` and `~/.espressif` had
+both disappeared by then. What worked, start to finish in about twenty minutes:
+
+```bash
+git clone -b v5.3.2 --depth 1 --recursive --shallow-submodules \
+  https://github.com/espressif/esp-idf.git ~/esp/esp-idf
+~/esp/esp-idf/install.sh esp32c6
+brew install cmake ninja          # the step nothing tells you about
+. ~/esp/esp-idf/export.sh
+cd packages/device/firmware/blitter && idf.py set-target esp32c6 && idf.py build
+```
+
+Two things that cost time and are not in Espressif's instructions. **`cmake` and
+`ninja` are not installed by `install.sh` on macOS** — it installs the RISC-V
+toolchain and expects those from Homebrew, and the failure is a bare "cmake must
+be available on the PATH". And **`set-target` must run after cmake exists**: a
+`set-target` that failed for want of cmake leaves a build directory configured
+for the default Xtensa target, and the next build asks for
+`xtensa-esp32-elf-gcc` on a RISC-V part. `rm -rf build sdkconfig` and redo it.
+
+So the four fixes above were symptoms of an install that had rotted in place,
+not of this toolchain. A fresh one skips them. Keep the list for the next
+rotted install; do not start from it.
 
 Then `idf.py fullclean` before building: a build directory left from an earlier
 Python refuses to configure against a new one, and says so clearly.
